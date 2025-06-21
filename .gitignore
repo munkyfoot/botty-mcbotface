@@ -13,3 +13,6 @@ venv/
 
 # SQLite
 *.db
+
+# Settings
+settings.json

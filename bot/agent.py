@@ -18,6 +18,7 @@ from tenacity import (  # type: ignore
 
 from .handlers import handle_ping
 from .state import StateStore
+from .config import load_settings
 
 
 class Agent:
@@ -25,12 +26,19 @@ class Agent:
 
     def __init__(
         self,
-        model: str = "gpt-4.1-mini",
-        enable_web_search: bool = False,
+        model: str | None = None,
+        instructions: str | None = None,
+        enable_web_search: bool | None = None,
         db_path: str | None = None,
     ) -> None:  # noqa: D401 — short description style
+        settings = load_settings()
         self.client = AsyncOpenAI()
-        self.model = model
+        self.model = model or settings["model"]
+        self._instructions = instructions or settings["instructions"]
+
+        if enable_web_search is None:
+            enable_web_search = settings.get("enable_web_search", False)
+
         # Conversation history as list of message dicts [{role, content}]
 
         # ------------------------------------------------------------------
@@ -94,7 +102,9 @@ class Agent:
         # ------------------------------------------------------------------
         # Fetch or load conversation history for this channel.
         if channel_id not in self._histories:
-            self._histories[channel_id] = self._state.load_history(channel_id)
+            # Load from DB – may be empty list
+            hist = self._state.load_history(channel_id)
+            self._histories[channel_id] = hist
 
         history = self._histories[channel_id]
 
@@ -108,6 +118,7 @@ class Agent:
             model=self.model,
             input=history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
+            instructions=self._instructions,
         )
 
         # Collect function calls, if any (SDK returns objects, not dicts)
@@ -169,6 +180,7 @@ class Agent:
             model=self.model,
             input=history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
+            instructions=self._instructions,
         )
 
         assistant_text_final: str = getattr(final_response, "output_text", "")
@@ -203,8 +215,7 @@ class Agent:
         Retries on *any* ``openai.OpenAIError`` (network issues, rate limits,
         server errors). Uses exponential backoff with jitter.
         """
-        # Using ``self.client`` inside keeps the method bound and access to
-        # the same client session.
+        # Using ``self.client``
         logging.debug(
             "Calling OpenAI with payload: %s",
             {k: v for k, v in kwargs.items() if k != "input"},
@@ -215,7 +226,7 @@ class Agent:
     # Persistence helper
     # ------------------------------------------------------------------
     def _append_and_persist(self, channel_id: str, message: Dict[str, Any]) -> None:
-        """Append a message to history and persist it in SQLite."""
+        """Append a message to in-memory history and persist via StateStore."""
         history = self._histories.setdefault(channel_id, [])
         history.append(message)
         try:
