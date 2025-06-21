@@ -18,8 +18,8 @@ class Bot:
         self.client = discord.Client(intents=self.intents)
         self.tree = discord.app_commands.CommandTree(self.client)
 
-        # Instantiate the shared Agent (with web search enabled)
-        self.agent = Agent(enable_web_search=True)
+        # Instantiate the shared Agent
+        self.agent = Agent()
 
         # Set up slash commands from the commands module
         setup_commands(self.tree)

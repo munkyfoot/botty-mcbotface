@@ -29,7 +29,6 @@ class Agent:
         model: str | None = None,
         instructions: str | None = None,
         enable_web_search: bool | None = None,
-        db_path: str | None = None,
     ) -> None:  # noqa: D401 — short description style
         settings = load_settings()
         self.client = AsyncOpenAI()
@@ -44,10 +43,7 @@ class Agent:
         # ------------------------------------------------------------------
         # Persistence setup via StateStore
         # ------------------------------------------------------------------
-        self._db_path = db_path or os.path.join(
-            os.path.dirname(__file__), "agent_history.db"
-        )
-        self._state = StateStore(self._db_path)
+        self._state = StateStore()
 
         # In-memory mapping channel_id -> history list
         self._histories: Dict[str, List[Dict[str, Any]]] = {}

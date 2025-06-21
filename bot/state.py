@@ -35,7 +35,8 @@ class _Message(Base):  # noqa: D101 (internal class)
 class StateStore:
     """Lightweight persistence layer for the Agent's conversation history."""
 
-    def __init__(self, db_path: str):
+    def __init__(self):
+        db_path = os.path.join(os.path.dirname(__file__), "..", "agent_history.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._engine = create_engine(f"sqlite:///{db_path}", future=True, echo=False)
         Base.metadata.create_all(self._engine)
