@@ -3,7 +3,7 @@ import os
 import discord
 
 from .commands import setup_commands
-from .handlers import handle_message_received
+from .agent import Agent
 
 load_dotenv()
 
@@ -17,6 +17,9 @@ class Bot:
         # Create low-level client and command tree (for slash commands).
         self.client = discord.Client(intents=self.intents)
         self.tree = discord.app_commands.CommandTree(self.client)
+
+        # Instantiate the shared Agent (with web search enabled)
+        self.agent = Agent(enable_web_search=True)
 
         # Set up slash commands from the commands module
         setup_commands(self.tree)
@@ -51,7 +54,8 @@ class Bot:
             if message.author == self.client.user:
                 return
 
-            response = await handle_message_received()
+            async with message.channel.typing():
+                response = await self.agent.respond(message.content)
             await message.channel.send(response)
 
     # ----------------------------
