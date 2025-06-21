@@ -16,7 +16,7 @@ from tenacity import (  # type: ignore
     wait_random_exponential,
 )
 
-from .handlers import handle_ping
+from .handlers import handle_ping, handle_roll
 from .state import StateStore
 from .config import load_settings
 
@@ -61,7 +61,46 @@ class Agent:
                     "required": [],
                     "additionalProperties": False,
                 },
-            }
+            },
+            {
+                "type": "function",
+                "name": "roll_dice",
+                "description": "Roll dice with parameters (value, count, modifier, drops).",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dice_value": {
+                            "type": "integer",
+                            "description": "Number of sides on the die (e.g., 6 for d6, 20 for d20)",
+                        },
+                        "dice_count": {
+                            "type": ["integer", "null"],
+                            "description": "How many dice to roll",
+                        },
+                        "dice_modifier": {
+                            "type": ["integer", "null"],
+                            "description": "Flat modifier to add after roll",
+                        },
+                        "drop_n_lowest": {
+                            "type": ["integer", "null"],
+                            "description": "Number of lowest dice to drop",
+                        },
+                        "drop_n_highest": {
+                            "type": ["integer", "null"],
+                            "description": "Number of highest dice to drop",
+                        },
+                    },
+                    "required": [
+                        "dice_value",
+                        "dice_count",
+                        "dice_modifier",
+                        "drop_n_lowest",
+                        "drop_n_highest",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -74,6 +113,7 @@ class Agent:
         # Local mapping of function names -> callables that implement them
         self._function_map = {
             "ping": handle_ping,
+            "roll_dice": handle_roll,
         }
 
     # ---------------------------------------------------------------------
