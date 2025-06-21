@@ -10,3 +10,6 @@ venv/
 
 # Environment variables
 .env
+
+# SQLite
+*.db

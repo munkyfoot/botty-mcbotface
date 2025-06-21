@@ -4,9 +4,12 @@ import asyncio
 import json
 import logging
 from typing import Any, Dict, List
+import os
 
 from openai import AsyncOpenAI, OpenAIError
-from tenacity import (
+
+# Suppress missing stubs for tenacity with ignore
+from tenacity import (  # type: ignore
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -14,18 +17,32 @@ from tenacity import (
 )
 
 from .handlers import handle_ping
+from .state import StateStore
 
 
 class Agent:
     """A simple stateful agent that uses OpenAI Responses API with function calling."""
 
     def __init__(
-        self, model: str = "gpt-4.1-mini", enable_web_search: bool = False
+        self,
+        model: str = "gpt-4.1-mini",
+        enable_web_search: bool = False,
+        db_path: str | None = None,
     ) -> None:  # noqa: D401 — short description style
         self.client = AsyncOpenAI()
         self.model = model
         # Conversation history as list of message dicts [{role, content}]
-        self._history: List[Dict[str, Any]] = []
+
+        # ------------------------------------------------------------------
+        # Persistence setup via StateStore
+        # ------------------------------------------------------------------
+        self._db_path = db_path or os.path.join(
+            os.path.dirname(__file__), "agent_history.db"
+        )
+        self._state = StateStore(self._db_path)
+
+        # In-memory mapping channel_id -> history list
+        self._histories: Dict[str, List[Dict[str, Any]]] = {}
 
         # Pre-defined tools (functions) the model can call.
         self._tools: List[Dict[str, Any]] = [
@@ -59,11 +76,14 @@ class Agent:
     # Public helpers
     # ---------------------------------------------------------------------
     async def respond(
-        self, user_message: str
+        self,
+        channel_id: str,
+        user_message: str,
     ) -> str:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
 
         Args:
+            channel_id (str): The ID of the conversation channel.
             user_message (str): The raw content of the user's message.
 
         Returns:
@@ -72,14 +92,21 @@ class Agent:
         # ------------------------------------------------------------------
         # Step 1 – append user message to conversation history
         # ------------------------------------------------------------------
-        self._history.append({"role": "user", "content": user_message})
+        # Fetch or load conversation history for this channel.
+        if channel_id not in self._histories:
+            self._histories[channel_id] = self._state.load_history(channel_id)
+
+        history = self._histories[channel_id]
+
+        user_entry = {"role": "user", "content": user_message}
+        self._append_and_persist(channel_id, user_entry)
 
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
         # ------------------------------------------------------------------
         response = await self._safe_create_response(
             model=self.model,
-            input=self._history,  # type: ignore[arg-type]
+            input=history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
         )
 
@@ -93,7 +120,9 @@ class Agent:
         if not tool_calls:
             # No function calls – just return the model's text
             assistant_text_resp: str = getattr(response, "output_text", "")
-            self._history.append({"role": "assistant", "content": assistant_text_resp})
+            self._append_and_persist(
+                channel_id, {"role": "assistant", "content": assistant_text_resp}
+            )
             return assistant_text_resp
 
         # ------------------------------------------------------------------
@@ -121,13 +150,16 @@ class Agent:
                 result = func(**args)
 
             # Append both the function call and its output to history
-            self._history.append(tool_call)  # the model's function call message
-            self._history.append(
+            self._append_and_persist(
+                channel_id, json.loads(tool_call.model_dump_json())
+            )
+            self._append_and_persist(
+                channel_id,
                 {
                     "type": "function_call_output",
                     "call_id": getattr(tool_call, "call_id"),
                     "output": str(result),
-                }
+                },
             )
 
         # ------------------------------------------------------------------
@@ -135,20 +167,26 @@ class Agent:
         # ------------------------------------------------------------------
         final_response = await self._safe_create_response(
             model=self.model,
-            input=self._history,  # type: ignore[arg-type]
+            input=history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
         )
 
         assistant_text_final: str = getattr(final_response, "output_text", "")
-        self._history.append({"role": "assistant", "content": assistant_text_final})
+        self._append_and_persist(
+            channel_id, {"role": "assistant", "content": assistant_text_final}
+        )
         return assistant_text_final
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
     # ------------------------------------------------------------------
-    def reset(self) -> None:
+    def reset(self, channel_id: str | None = None) -> None:
         """Clear stored conversation history."""
-        self._history.clear()
+        if channel_id is None:
+            self._histories.clear()
+        else:
+            self._histories.pop(channel_id, None)
+        self._state.reset(channel_id)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -172,3 +210,15 @@ class Agent:
             {k: v for k, v in kwargs.items() if k != "input"},
         )
         return await self.client.responses.create(**kwargs)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
+    # Persistence helper
+    # ------------------------------------------------------------------
+    def _append_and_persist(self, channel_id: str, message: Dict[str, Any]) -> None:
+        """Append a message to history and persist it in SQLite."""
+        history = self._histories.setdefault(channel_id, [])
+        history.append(message)
+        try:
+            self._state.append(channel_id, message)
+        except Exception as exc:  # noqa: BLE001
+            logging.error("Failed to persist agent message: %s", exc)

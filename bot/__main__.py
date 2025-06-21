@@ -55,7 +55,8 @@ class Bot:
                 return
 
             async with message.channel.typing():
-                response = await self.agent.respond(message.content)
+                channel_id = str(message.channel.id)
+                response = await self.agent.respond(channel_id, message.content)
             await message.channel.send(response)
 
     # ----------------------------
