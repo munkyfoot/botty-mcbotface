@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from .handlers import handle_ping
 
@@ -70,7 +77,7 @@ class Agent:
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
         # ------------------------------------------------------------------
-        response = await self.client.responses.create(
+        response = await self._safe_create_response(
             model=self.model,
             input=self._history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
@@ -126,7 +133,7 @@ class Agent:
         # ------------------------------------------------------------------
         # Step 4 – second call: give model the results and get final answer
         # ------------------------------------------------------------------
-        final_response = await self.client.responses.create(
+        final_response = await self._safe_create_response(
             model=self.model,
             input=self._history,  # type: ignore[arg-type]
             tools=self._tools,  # type: ignore[arg-type]
@@ -142,3 +149,26 @@ class Agent:
     def reset(self) -> None:
         """Clear stored conversation history."""
         self._history.clear()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(min=1, max=10),
+        retry=retry_if_exception_type(OpenAIError),
+    )
+    async def _safe_create_response(self, **kwargs):  # type: ignore[no-self-use]
+        """Wrapper around ``AsyncOpenAI.responses.create`` with retries.
+
+        Retries on *any* ``openai.OpenAIError`` (network issues, rate limits,
+        server errors). Uses exponential backoff with jitter.
+        """
+        # Using ``self.client`` inside keeps the method bound and access to
+        # the same client session.
+        logging.debug(
+            "Calling OpenAI with payload: %s",
+            {k: v for k, v in kwargs.items() if k != "input"},
+        )
+        return await self.client.responses.create(**kwargs)  # type: ignore[arg-type]
