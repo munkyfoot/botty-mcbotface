@@ -56,8 +56,15 @@ class Bot:
 
             async with message.channel.typing():
                 channel_id = str(message.channel.id)
-                response = await self.agent.respond(channel_id, message.content)
-            await message.channel.send(response)
+                async for data_type, content in self.agent.respond(
+                    channel_id, message.content
+                ):
+                    if data_type in ["text", "image_url"]:
+                        await message.channel.send(content)
+                    elif data_type == "file":
+                        await message.channel.send(file=discord.File(content))
+                    else:
+                        raise ValueError(f"Unknown data type: {data_type}")
 
     # ----------------------------
     # Public helpers

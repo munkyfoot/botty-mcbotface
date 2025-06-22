@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, AsyncGenerator
 import os
 
 from openai import AsyncOpenAI, OpenAIError
@@ -123,7 +123,7 @@ class Agent:
         self,
         channel_id: str,
         user_message: str,
-    ) -> str:  # noqa: D401 — short description style
+    ) -> AsyncGenerator[Tuple[str, Any], None]:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
 
         Args:
@@ -170,11 +170,13 @@ class Agent:
             self._append_and_persist(
                 channel_id, {"role": "assistant", "content": assistant_text_resp}
             )
-            return assistant_text_resp
+            yield "text", assistant_text_resp
+            return
 
         # ------------------------------------------------------------------
         # Step 3 – execute function calls and feed results back to the model
         # ------------------------------------------------------------------
+        should_respond = False
         for tool_call in tool_calls:
             name: str = getattr(tool_call, "name")
             args_str: str = getattr(tool_call, "arguments", "{}")
@@ -209,21 +211,37 @@ class Agent:
                 },
             )
 
+            if name == "ping":
+                yield "text", result
+
+            if name == "roll_dice":
+                yield "text", result
+                self._append_and_persist(
+                    channel_id,
+                    {
+                        "role": "system",
+                        "content": "The results of the roll have been sent to the user. Continue the conversation.",
+                    },
+                )
+                should_respond = True
+
         # ------------------------------------------------------------------
         # Step 4 – second call: give model the results and get final answer
         # ------------------------------------------------------------------
-        final_response = await self._safe_create_response(
-            model=self.model,
-            input=history,  # type: ignore[arg-type]
-            tools=self._tools,  # type: ignore[arg-type]
-            instructions=self._instructions,
-        )
+        if should_respond:
+            final_response = await self._safe_create_response(
+                model=self.model,
+                input=history,  # type: ignore[arg-type]
+                # tools=self._tools,  # type: ignore[arg-type]
+                instructions=self._instructions,
+            )
 
-        assistant_text_final: str = getattr(final_response, "output_text", "")
-        self._append_and_persist(
-            channel_id, {"role": "assistant", "content": assistant_text_final}
-        )
-        return assistant_text_final
+            assistant_text_final: str = getattr(final_response, "output_text", "")
+            self._append_and_persist(
+                channel_id, {"role": "assistant", "content": assistant_text_final}
+            )
+            yield "text", assistant_text_final
+        return
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
