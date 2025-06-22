@@ -243,6 +243,7 @@ class Agent:
                 tools=self._tools if not last_turn else [],  # type: ignore[arg-type]
                 parallel_tool_calls=False,
                 instructions=self._instructions,
+                truncation="auto",
             )
 
             # Collect function calls, if any (SDK returns objects, not dicts)
