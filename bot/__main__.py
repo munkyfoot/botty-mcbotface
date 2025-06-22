@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 import os
 import discord
+import io
+from datetime import datetime, timezone
 
 from .commands import setup_commands
 from .agent import Agent
@@ -59,10 +61,19 @@ class Bot:
                 async for data_type, content in self.agent.respond(
                     channel_id, message.content
                 ):
-                    if data_type in ["text", "image_url"]:
+                    if data_type == "text":
                         await message.channel.send(content)
-                    elif data_type == "file":
-                        await message.channel.send(file=discord.File(content))
+                    elif data_type == "image_data":
+                        data = content
+                        if not data or not isinstance(data, bytes):
+                            await message.channel.send(
+                                "Failed to download generated image."
+                            )
+                            return
+                        # Sanitize filename and create attachment
+                        filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+                        file = discord.File(io.BytesIO(data), filename=filename)
+                        await message.channel.send(file=file)
                     else:
                         raise ValueError(f"Unknown data type: {data_type}")
 

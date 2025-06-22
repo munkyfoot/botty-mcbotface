@@ -1,6 +1,11 @@
 """Business logic handlers for bot functionality."""
 
-from typing import List
+import random
+import replicate
+import asyncio
+import io
+import aiohttp
+from typing import Literal
 
 
 async def handle_ping() -> str:
@@ -10,12 +15,6 @@ async def handle_ping() -> str:
         str: The ping response message.
     """
     return "Pong! 🏓"
-
-
-# ---------------------------------------------------------------------------
-# Dice rolling handler
-# ---------------------------------------------------------------------------
-import random
 
 
 async def handle_roll(
@@ -117,3 +116,63 @@ async def handle_roll(
         f"*Rolled {dice_count_str} d{dice_value}{dice_plural}"
         f"{modifier_str}{drop_str} and got* ***{total}***.{details_str}"
     )
+
+
+async def handle_generate_image(
+    prompt: str,
+    aspect_ratio: Literal[
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "4:5",
+        "5:4",
+        "21:9",
+        "9:21",
+        "2:1",
+        "1:2",
+    ] = "1:1",
+) -> bytes | None:
+    """Generate an image based on a prompt.
+
+    Args:
+        prompt: The prompt to generate an image from.
+
+    Returns:
+        bytes: The generated image.
+    """
+
+    output = await asyncio.to_thread(
+        replicate.run,
+        "black-forest-labs/flux-kontext-pro",
+        input={
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "output_format": "jpg",
+            "safety_tolerance": 6,
+        },
+    )
+
+    # Some models return a list of URLs, others a single URL string.
+    if isinstance(output, list):
+        image_url = str(output[0]) if output else ""
+    else:
+        image_url = str(output)
+
+    if not image_url:
+        return None
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                else:
+                    return None
+    except Exception as e:  # noqa: BLE001
+        return None
+
+    return data

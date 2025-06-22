@@ -5,6 +5,9 @@ import json
 import logging
 from typing import Any, Dict, List, Tuple, AsyncGenerator
 import os
+import base64
+import io
+import aiohttp
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -16,7 +19,7 @@ from tenacity import (  # type: ignore
     wait_random_exponential,
 )
 
-from .handlers import handle_ping, handle_roll
+from .handlers import handle_ping, handle_roll, handle_generate_image
 from .state import StateStore
 from .config import load_settings
 
@@ -105,6 +108,46 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
+            {
+                "type": "function",
+                "name": "generate_image",
+                "description": "Generate an image based on a prompt. Returns a URL of the generated image.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "The prompt describing the requested image content",
+                        },
+                        "aspect_ratio": {
+                            "type": "string",
+                            "description": "Desired aspect ratio for the image (e.g., 1:1, 16:9)",
+                            "enum": [
+                                "1:1",
+                                "16:9",
+                                "9:16",
+                                "4:3",
+                                "3:4",
+                                "3:2",
+                                "2:3",
+                                "4:5",
+                                "5:4",
+                                "21:9",
+                                "9:21",
+                                "2:1",
+                                "1:2",
+                            ],
+                            "default": "1:1",
+                        },
+                    },
+                    "required": [
+                        "prompt",
+                        "aspect_ratio",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -118,6 +161,7 @@ class Agent:
         self._function_map = {
             "ping": handle_ping,
             "roll_dice": handle_roll,
+            "generate_image": handle_generate_image,
         }
 
     # ---------------------------------------------------------------------
@@ -210,7 +254,7 @@ class Agent:
                     continue
 
                 # If the underlying function is a coroutine we need to await it.
-                result: Any
+                result: str | bytes | None
                 if asyncio.iscoroutinefunction(func):
                     result = await func(**args)
                 else:
@@ -225,7 +269,9 @@ class Agent:
                     {
                         "type": "function_call_output",
                         "call_id": getattr(tool_call, "call_id"),
-                        "output": str(result),
+                        "output": (
+                            result if isinstance(result, str) else str(result)[:1024]
+                        ),
                     },
                 )
 
@@ -234,13 +280,31 @@ class Agent:
 
                 if name == "roll_dice":
                     yield "text", result
-                    # self._append_and_persist(
-                    #     channel_id,
-                    #     {
-                    #         "role": "system",
-                    #         "content": "The results of the roll have been sent to the user. Continue the conversation.",
-                    #     },
-                    # )
+
+                if name == "generate_image":
+                    image_data = result
+
+                    if image_data:
+                        base64_image = base64.b64encode(image_data).decode()  # type: ignore[arg-type]
+                        self._append_and_persist(
+                            channel_id,
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "Here is the image you generated.",
+                                    },
+                                    {
+                                        "type": "input_image",
+                                        "image_url": f"data:image/jpeg;base64,{base64_image}",
+                                    },
+                                ],
+                            },
+                        )
+                        yield "image_data", image_data
+                    else:
+                        yield "text", "Failed to generate image."
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
