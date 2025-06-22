@@ -29,14 +29,14 @@ class Agent:
         model: str | None = None,
         instructions: str | None = None,
         enable_web_search: bool | None = None,
+        maximum_turns: int | None = None,
     ) -> None:  # noqa: D401 — short description style
         settings = load_settings()
-        self.client = AsyncOpenAI()
-        self.model = model or settings["model"]
+        self._client = AsyncOpenAI()
+        self._model = model or settings["model"]
         self._instructions = instructions or settings["instructions"]
-
-        if enable_web_search is None:
-            enable_web_search = settings.get("enable_web_search", False)
+        self._enable_web_search = enable_web_search or settings["enable_web_search"]
+        self._maximum_turns = maximum_turns or settings["maximum_turns"]
 
         # Conversation history as list of message dicts [{role, content}]
 
@@ -75,20 +75,24 @@ class Agent:
                             "description": "Number of sides on the die (e.g., 6 for d6, 20 for d20)",
                         },
                         "dice_count": {
-                            "type": ["integer", "null"],
+                            "type": "integer",
                             "description": "How many dice to roll",
+                            "default": 1,
                         },
                         "dice_modifier": {
-                            "type": ["integer", "null"],
+                            "type": "integer",
                             "description": "Flat modifier to add after roll",
+                            "default": 0,
                         },
                         "drop_n_lowest": {
-                            "type": ["integer", "null"],
+                            "type": "integer",
                             "description": "Number of lowest dice to drop",
+                            "default": 0,
                         },
                         "drop_n_highest": {
-                            "type": ["integer", "null"],
+                            "type": "integer",
                             "description": "Number of highest dice to drop",
+                            "default": 0,
                         },
                     },
                     "required": [
@@ -150,98 +154,93 @@ class Agent:
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
         # ------------------------------------------------------------------
-        response = await self._safe_create_response(
-            model=self.model,
-            input=history,  # type: ignore[arg-type]
-            tools=self._tools,  # type: ignore[arg-type]
-            instructions=self._instructions,
-        )
+        turns = 0
+        while turns <= self._maximum_turns:
+            turns += 1
 
-        # Collect function calls, if any (SDK returns objects, not dicts)
-        tool_calls = [
-            item
-            for item in getattr(response, "output", [])
-            if getattr(item, "type", None) == "function_call"
-        ]
-
-        if not tool_calls:
-            # No function calls – just return the model's text
-            assistant_text_resp: str = getattr(response, "output_text", "")
-            self._append_and_persist(
-                channel_id, {"role": "assistant", "content": assistant_text_resp}
-            )
-            yield "text", assistant_text_resp
-            return
-
-        # ------------------------------------------------------------------
-        # Step 3 – execute function calls and feed results back to the model
-        # ------------------------------------------------------------------
-        should_respond = False
-        for tool_call in tool_calls:
-            name: str = getattr(tool_call, "name")
-            args_str: str = getattr(tool_call, "arguments", "{}")
-            try:
-                args = json.loads(args_str) if args_str else {}
-            except json.JSONDecodeError:
-                args = {}
-
-            # Route to implementation
-            func = self._function_map.get(name)
-            if func is None:
-                # Unknown function – ignore
-                continue
-
-            # If the underlying function is a coroutine we need to await it.
-            result: Any
-            if asyncio.iscoroutinefunction(func):
-                result = await func(**args)
-            else:
-                result = func(**args)
-
-            # Append both the function call and its output to history
-            self._append_and_persist(
-                channel_id, json.loads(tool_call.model_dump_json())
-            )
-            self._append_and_persist(
-                channel_id,
-                {
-                    "type": "function_call_output",
-                    "call_id": getattr(tool_call, "call_id"),
-                    "output": str(result),
-                },
-            )
-
-            if name == "ping":
-                yield "text", result
-
-            if name == "roll_dice":
-                yield "text", result
+            last_turn = turns == self._maximum_turns
+            if last_turn:
                 self._append_and_persist(
                     channel_id,
                     {
                         "role": "system",
-                        "content": "The results of the roll have been sent to the user. Continue the conversation.",
+                        "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
                     },
                 )
-                should_respond = True
-
-        # ------------------------------------------------------------------
-        # Step 4 – second call: give model the results and get final answer
-        # ------------------------------------------------------------------
-        if should_respond:
-            final_response = await self._safe_create_response(
-                model=self.model,
+            response = await self._safe_create_response(
+                model=self._model,
                 input=history,  # type: ignore[arg-type]
-                # tools=self._tools,  # type: ignore[arg-type]
+                tools=self._tools if not last_turn else [],  # type: ignore[arg-type]
+                parallel_tool_calls=False,
                 instructions=self._instructions,
             )
 
-            assistant_text_final: str = getattr(final_response, "output_text", "")
-            self._append_and_persist(
-                channel_id, {"role": "assistant", "content": assistant_text_final}
-            )
-            yield "text", assistant_text_final
-        return
+            # Collect function calls, if any (SDK returns objects, not dicts)
+            tool_calls = [
+                item
+                for item in getattr(response, "output", [])
+                if getattr(item, "type", None) == "function_call"
+            ]
+
+            if not tool_calls:
+                # No function calls – just return the model's text
+                assistant_text_resp: str = getattr(response, "output_text", "")
+                self._append_and_persist(
+                    channel_id, {"role": "assistant", "content": assistant_text_resp}
+                )
+                yield "text", assistant_text_resp
+                # We have produced a textual response, so end this respond() cycle.
+                break
+
+            # ------------------------------------------------------------------
+            # Step 3 – execute function calls and feed results back to the model
+            # ------------------------------------------------------------------
+            for tool_call in tool_calls:
+                name: str = getattr(tool_call, "name")
+                args_str: str = getattr(tool_call, "arguments", "{}")
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except json.JSONDecodeError:
+                    args = {}
+
+                # Route to implementation
+                func = self._function_map.get(name)
+                if func is None:
+                    # Unknown function – ignore
+                    continue
+
+                # If the underlying function is a coroutine we need to await it.
+                result: Any
+                if asyncio.iscoroutinefunction(func):
+                    result = await func(**args)
+                else:
+                    result = func(**args)
+
+                # Append both the function call and its output to history
+                self._append_and_persist(
+                    channel_id, json.loads(tool_call.model_dump_json())
+                )
+                self._append_and_persist(
+                    channel_id,
+                    {
+                        "type": "function_call_output",
+                        "call_id": getattr(tool_call, "call_id"),
+                        "output": str(result),
+                    },
+                )
+
+                if name == "ping":
+                    yield "text", result
+
+                if name == "roll_dice":
+                    yield "text", result
+                    # self._append_and_persist(
+                    #     channel_id,
+                    #     {
+                    #         "role": "system",
+                    #         "content": "The results of the roll have been sent to the user. Continue the conversation.",
+                    #     },
+                    # )
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
@@ -269,12 +268,12 @@ class Agent:
         Retries on *any* ``openai.OpenAIError`` (network issues, rate limits,
         server errors). Uses exponential backoff with jitter.
         """
-        # Using ``self.client``
+        # Using ``self._client``
         logging.debug(
             "Calling OpenAI with payload: %s",
             {k: v for k, v in kwargs.items() if k != "input"},
         )
-        return await self.client.responses.create(**kwargs)  # type: ignore[arg-type]
+        return await self._client.responses.create(**kwargs)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Persistence helper

@@ -9,6 +9,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "model": "gpt-4.1-mini",
     "instructions": "You are Botty McBotface, a bot powered by OpenAI's API. You are a friendly, helpful bot that is always willing to chat and help out. You are not perfect, but you are trying your best.",  # default personality
     "enable_web_search": False,
+    "maximum_turns": 10,
 }
 
 
