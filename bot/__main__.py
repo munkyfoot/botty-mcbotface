@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from .commands import setup_commands
 from .agent import Agent
+from .config import load_settings
 
 load_dotenv()
 
@@ -20,8 +21,22 @@ class Bot:
         self.client = discord.Client(intents=self.intents)
         self.tree = discord.app_commands.CommandTree(self.client)
 
+        # Load settings
+        self.settings = load_settings()
+
         # Instantiate the shared Agent
-        self.agent = Agent()
+        if not self.settings or None in self.settings.values():
+            raise ValueError("Settings are not loaded or are missing values")
+
+        self.agent = Agent(
+            model=self.settings["model"],
+            instructions=self.settings["instructions"],
+            enable_web_search=self.settings["enable_web_search"],
+            maximum_turns=self.settings["maximum_turns"],
+        )
+
+        self._auto_respond_channels = self.settings["auto_respond_channels"]
+        self._dm_whitelist = self.settings["dm_whitelist"]
 
         # Set up slash commands from the commands module
         setup_commands(self.tree)
@@ -55,6 +70,24 @@ class Bot:
             # Ignore messages from the bot itself to avoid infinite loops.
             if message.author == self.client.user:
                 return
+
+            # Only respond to DMs if the user is in the whitelist,
+            # or to channels if the channel name is in auto_respond_channels.
+            if isinstance(message.channel, discord.DMChannel):
+                # DM: check if user is in whitelist
+                if message.author.id not in self._dm_whitelist:
+                    return
+            else:
+                # Channel: check if channel name is in auto_respond_channels
+                channel_name = getattr(message.channel, "name", None)
+                bot_mentioned = (
+                    self.client.user in message.mentions if self.client.user else False
+                )
+                if (
+                    channel_name is None
+                    or channel_name not in self._auto_respond_channels
+                ) and not bot_mentioned:
+                    return
 
             async with message.channel.typing():
                 channel_id = str(message.channel.id)

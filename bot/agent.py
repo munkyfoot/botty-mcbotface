@@ -26,7 +26,6 @@ from .handlers import (
     handle_generate_meme,
 )
 from .state import StateStore
-from .config import load_settings
 
 
 class Agent:
@@ -34,18 +33,18 @@ class Agent:
 
     def __init__(
         self,
-        model: str | None = None,
-        instructions: str | None = None,
-        enable_web_search: bool | None = None,
-        maximum_turns: int | None = None,
-    ) -> None:  # noqa: D401 — short description style
-        settings = load_settings()
-        self._client = AsyncOpenAI()
-        self._model = model or settings["model"]
-        self._instructions = instructions or settings["instructions"]
-        self._enable_web_search = enable_web_search or settings["enable_web_search"]
-        self._maximum_turns = maximum_turns or settings["maximum_turns"]
+        model: str,
+        instructions: str,
+        enable_web_search: bool,
+        maximum_turns: int,
+    ) -> None:
 
+        self._model = model
+        self._instructions = instructions
+        self._enable_web_search = enable_web_search
+        self._maximum_turns = maximum_turns
+
+        self._client = AsyncOpenAI()
         # Conversation history as list of message dicts [{role, content}]
 
         # ------------------------------------------------------------------
