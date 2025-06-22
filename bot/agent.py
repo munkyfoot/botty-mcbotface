@@ -8,6 +8,7 @@ import os
 import base64
 import io
 import aiohttp
+from PIL import Image
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -313,7 +314,18 @@ class Agent:
 
                     if image_data:
                         if isinstance(image_data, bytes):
-                            base64_image = base64.b64encode(image_data).decode()
+                            image = Image.open(io.BytesIO(image_data))
+                            # Resize image to max 512px width/height, maintaining aspect ratio
+                            max_size = 512
+                            image.thumbnail(
+                                (max_size, max_size), Image.Resampling.LANCZOS
+                            )
+                            # Compress image to JPEG with quality=70
+                            buffer = io.BytesIO()
+                            image = image.convert("RGB")  # Ensure JPEG compatible
+                            image.save(buffer, format="JPEG", quality=70, optimize=True)
+                            compressed_data = buffer.getvalue()
+                            base64_image = base64.b64encode(compressed_data).decode()
                             self._append_and_persist(
                                 channel_id,
                                 {
@@ -330,7 +342,7 @@ class Agent:
                                     ],
                                 },
                             )
-                            yield "image_data", image_data
+                            yield "image_data", image_data  # Send uncompressed image
                         else:
                             yield "text", "Failed to generate image."
                     else:
