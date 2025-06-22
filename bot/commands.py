@@ -4,7 +4,12 @@ import re
 from typing import Literal
 from datetime import datetime, timezone
 
-from .handlers import handle_ping, handle_roll, handle_generate_image
+from .handlers import (
+    handle_ping,
+    handle_roll,
+    handle_generate_image,
+    handle_generate_meme,
+)
 
 
 def setup_commands(tree: discord.app_commands.CommandTree) -> None:
@@ -79,6 +84,36 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
 
         # Sanitize filename and create attachment
         filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", prompt) or "image"
+        filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=filename)
+
+        await interaction.edit_original_response(
+            attachments=[file],
+        )
+
+    @tree.command(name="meme", description="Generate a meme based on a prompt")
+    async def _meme(  # noqa: D401, N802 — internal callback name
+        interaction: discord.Interaction,
+        image_prompt: str,
+        text: str,
+        private: bool = False,
+    ) -> None:
+        """Generate a meme based on a prompt."""
+        # Defer the response to avoid "Unknown interaction" error
+        await interaction.response.defer(thinking=True, ephemeral=private)
+        # Call the image generation handler (should return a URL or similar)
+        image_data = await handle_generate_meme(image_prompt, text)
+
+        if not image_data:
+            await interaction.edit_original_response(content="Failed to generate meme.")
+            return
+
+        if not isinstance(image_data, bytes):
+            await interaction.edit_original_response(content="Failed to generate meme.")
+            return
+
+        # Sanitize filename and create attachment
+        filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", image_prompt) or "image"
         filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
         file = discord.File(io.BytesIO(image_data), filename=filename)
 

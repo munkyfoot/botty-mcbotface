@@ -19,7 +19,12 @@ from tenacity import (  # type: ignore
     wait_random_exponential,
 )
 
-from .handlers import handle_ping, handle_roll, handle_generate_image
+from .handlers import (
+    handle_ping,
+    handle_roll,
+    handle_generate_image,
+    handle_generate_meme,
+)
 from .state import StateStore
 from .config import load_settings
 
@@ -148,6 +153,27 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
+            {
+                "type": "function",
+                "name": "generate_meme",
+                "description": "Generate a meme based on a prompt.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_prompt": {
+                            "type": "string",
+                            "description": "The prompt to generate an image from.",
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "The text to add to the image.",
+                        },
+                    },
+                    "required": ["image_prompt", "text"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -162,6 +188,7 @@ class Agent:
             "ping": handle_ping,
             "roll_dice": handle_roll,
             "generate_image": handle_generate_image,
+            "generate_meme": handle_generate_meme,
         }
 
     # ---------------------------------------------------------------------
@@ -281,28 +308,31 @@ class Agent:
                 if name == "roll_dice":
                     yield "text", result
 
-                if name == "generate_image":
+                if name == "generate_image" or name == "generate_meme":
                     image_data = result
 
                     if image_data:
-                        base64_image = base64.b64encode(image_data).decode()  # type: ignore[arg-type]
-                        self._append_and_persist(
-                            channel_id,
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "input_text",
-                                        "text": "Here is the image you generated.",
-                                    },
-                                    {
-                                        "type": "input_image",
-                                        "image_url": f"data:image/jpeg;base64,{base64_image}",
-                                    },
-                                ],
-                            },
-                        )
-                        yield "image_data", image_data
+                        if isinstance(image_data, bytes):
+                            base64_image = base64.b64encode(image_data).decode()
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_text",
+                                            "text": "Here is the image you generated.",
+                                        },
+                                        {
+                                            "type": "input_image",
+                                            "image_url": f"data:image/jpeg;base64,{base64_image}",
+                                        },
+                                    ],
+                                },
+                            )
+                            yield "image_data", image_data
+                        else:
+                            yield "text", "Failed to generate image."
                     else:
                         yield "text", "Failed to generate image."
 
