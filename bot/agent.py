@@ -26,6 +26,7 @@ from .handlers import (
     handle_roll,
     handle_generate_image,
     handle_generate_meme,
+    handle_edit_image,
 )
 from .state import StateStore
 from .s3 import S3
@@ -177,6 +178,27 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
+            {
+                "type": "function",
+                "name": "edit_image",
+                "description": "Edit an image based on a prompt.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "The prompt to edit the image with. Describe the changes you want to make to the image.",
+                        },
+                        "image": {
+                            "type": "string",
+                            "description": "The url of the image to edit. IMPORTANT: The image must be a URL, not a base64 encoded string. You should only use urls for images available in the conversation history.",
+                        },
+                    },
+                    "required": ["prompt", "image"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -192,6 +214,7 @@ class Agent:
             "roll_dice": handle_roll,
             "generate_image": handle_generate_image,
             "generate_meme": handle_generate_meme,
+            "edit_image": handle_edit_image,
         }
 
     # ---------------------------------------------------------------------
@@ -312,7 +335,7 @@ class Agent:
                 if name == "roll_dice":
                     yield "text", result
 
-                if name == "generate_image" or name == "generate_meme":
+                if name in ["generate_image", "generate_meme", "edit_image"]:
                     image_data = result
 
                     if image_data:
@@ -321,6 +344,9 @@ class Agent:
                                 key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
                                 image_url = self._s3.public_upload(
                                     io.BytesIO(image_data), key
+                                )
+                                image_context_message = (
+                                    f"Here is the image url: {image_url}"
                                 )
                             else:
                                 image = Image.open(io.BytesIO(image_data))
@@ -340,6 +366,9 @@ class Agent:
                                     compressed_data
                                 ).decode()
                                 image_url = f"data:image/jpeg;base64,{base64_image}"
+                                image_context_message = (
+                                    "This is a base64 encoded image."
+                                )
                             self._append_and_persist(
                                 channel_id,
                                 {
@@ -347,7 +376,7 @@ class Agent:
                                     "content": [
                                         {
                                             "type": "input_text",
-                                            "text": "Here is the image you generated.",
+                                            "text": f"Here is the image you generated. {image_context_message}",
                                         },
                                         {
                                             "type": "input_image",
