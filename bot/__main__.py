@@ -4,6 +4,8 @@ import discord
 import io
 from datetime import datetime, timezone
 
+from bot.utils import compress_image, get_base64_image_url
+
 from .commands import setup_commands
 from .agent import Agent
 from .config import load_settings
@@ -103,7 +105,22 @@ class Bot:
                 if getattr(attachment, "content_type", "")
                 and attachment.content_type.startswith("image/")
             ]
-            image_urls = [attachment.url for attachment in image_attachments]
+            image_urls = []
+
+            for attachment in image_attachments:
+                image_data = await attachment.read()
+                if self.s3:
+                    compressed_data = compress_image(image_data)
+                    image_url = self.s3.public_upload(
+                        io.BytesIO(compressed_data),
+                        f"images/{message.channel.id}/{attachment.id}.jpg",
+                    )
+                else:
+                    compressed_data = compress_image(
+                        image_data, max_size=512, quality=70
+                    )
+                    image_url = get_base64_image_url(compressed_data)
+                image_urls.append(image_url)
 
             async with message.channel.typing():
                 channel_id = str(message.channel.id)

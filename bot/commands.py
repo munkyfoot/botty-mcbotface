@@ -2,6 +2,7 @@ import base64
 import discord
 import io
 import re
+import uuid
 from typing import Literal, Any
 from datetime import datetime, timezone
 
@@ -14,6 +15,7 @@ from .handlers import (
     handle_edit_image,
 )
 from .s3 import S3
+from .utils import compress_image, get_base64_image_url
 
 
 def setup_commands(
@@ -24,13 +26,14 @@ def setup_commands(
     async def _get_image_user_message(
         base_message: str, image_data: bytes, filename: str
     ) -> dict[str, Any]:
+
         if s3:
-            image_url = s3.public_upload(io.BytesIO(image_data), filename)
+            compressed_data = compress_image(image_data)
+            image_url = s3.public_upload(io.BytesIO(compressed_data), filename)
             image_context_message = f"Here is the image url: {image_url}"
         else:
-            image_url = (
-                f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
-            )
+            compressed_data = compress_image(image_data, max_size=512, quality=70)
+            image_url = get_base64_image_url(compressed_data)
             image_context_message = "This is a base64 encoded image."
 
         return {
@@ -130,9 +133,8 @@ def setup_commands(
             return
 
         # Sanitize filename and create attachment
-        filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", prompt) or "image"
-        filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-        file = discord.File(io.BytesIO(image_data), filename=filename)
+        key = f"images/{interaction.channel_id}/{uuid.uuid4()}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=key)
 
         await interaction.edit_original_response(
             attachments=[file],
@@ -146,7 +148,7 @@ def setup_commands(
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated image.", image_data, filename
+                "Here is the generated image.", image_data, key
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -175,9 +177,8 @@ def setup_commands(
             return
 
         # Sanitize filename and create attachment
-        filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", image_prompt) or "image"
-        filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-        file = discord.File(io.BytesIO(image_data), filename=filename)
+        key = f"images/{interaction.channel_id}/{uuid.uuid4()}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=key)
 
         await interaction.edit_original_response(
             attachments=[file],
@@ -191,7 +192,7 @@ def setup_commands(
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated meme.", image_data, filename
+                "Here is the generated meme.", image_data, key
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -214,6 +215,7 @@ def setup_commands(
         # not a Discord Attachment instance.
         try:
             attachment_bytes = await image.read()
+            original_key = f"images/{interaction.channel_id}/{image.id}.jpg"
         except Exception:  # noqa: BLE001 — fallback for any I/O issues
             await interaction.edit_original_response(
                 content="Failed to read the attached image."
@@ -232,9 +234,8 @@ def setup_commands(
             return
 
         # Sanitize filename and create attachment
-        filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", prompt) or "image"
-        filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-        file = discord.File(io.BytesIO(image_data), filename=filename)
+        edited_key = f"images/{interaction.channel_id}/{uuid.uuid4()}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=edited_key)
 
         await interaction.edit_original_response(
             attachments=[file],
@@ -248,14 +249,14 @@ def setup_commands(
                 },
             )
             user_message_original = await _get_image_user_message(
-                "Here is the original image.", attachment_bytes, filename
+                "Here is the original image.", attachment_bytes, original_key
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
                 user_message_original,
             )
             user_message_edited = await _get_image_user_message(
-                "Here is the edited image.", image_data, filename
+                "Here is the edited image.", image_data, edited_key
             )
             agent._append_and_persist(
                 str(interaction.channel_id),

@@ -8,8 +8,6 @@ from typing import Any, Dict, List, Tuple, AsyncGenerator
 import os
 import base64
 import io
-import aiohttp
-from PIL import Image
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -30,6 +28,7 @@ from .handlers import (
 )
 from .state import StateStore
 from .s3 import S3
+from .utils import compress_image, get_base64_image_url
 
 
 class Agent:
@@ -375,23 +374,10 @@ class Agent:
                                     f"Here is the image url: {image_url}"
                                 )
                             else:
-                                image = Image.open(io.BytesIO(image_data))
-                                # Resize image to max 512px width/height, maintaining aspect ratio
-                                max_size = 512
-                                image.thumbnail(
-                                    (max_size, max_size), Image.Resampling.LANCZOS
+                                compressed_data = compress_image(
+                                    image_data, max_size=512, quality=70
                                 )
-                                # Compress image to JPEG with quality=70
-                                buffer = io.BytesIO()
-                                image = image.convert("RGB")  # Ensure JPEG compatible
-                                image.save(
-                                    buffer, format="JPEG", quality=70, optimize=True
-                                )
-                                compressed_data = buffer.getvalue()
-                                base64_image = base64.b64encode(
-                                    compressed_data
-                                ).decode()
-                                image_url = f"data:image/jpeg;base64,{base64_image}"
+                                image_url = get_base64_image_url(compressed_data)
                                 image_context_message = (
                                     "This is a base64 encoded image."
                                 )
