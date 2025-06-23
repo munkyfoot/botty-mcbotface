@@ -224,13 +224,14 @@ class Agent:
         self,
         channel_id: str,
         user_message: str,
+        image_urls: List[str] = [],
     ) -> AsyncGenerator[Tuple[str, Any], None]:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
 
         Args:
             channel_id (str): The ID of the conversation channel.
             user_message (str): The raw content of the user's message.
-
+            image_urls (List[str]): The URLs of the images attached to the user's message.
         Returns:
             str: The assistant's final textual response ready to be sent.
         """
@@ -245,7 +246,23 @@ class Agent:
 
         history = self._histories[channel_id]
 
-        user_entry = {"role": "user", "content": user_message}
+        user_entry: Dict[str, Any] = {"role": "user"}
+        if image_urls and len(image_urls) > 0:
+            image_context_message = (
+                "Here are the urls for the attached image(s):\n" + "\n".join(image_urls)
+            )
+            user_entry["content"] = [
+                {
+                    "type": "input_text",
+                    "text": f"{user_message}\n{image_context_message}",
+                },
+                *[
+                    {"type": "input_image", "image_url": image_url}
+                    for image_url in image_urls
+                ],
+            ]
+        else:
+            user_entry["content"] = user_message
         self._append_and_persist(channel_id, user_entry)
 
         # ------------------------------------------------------------------

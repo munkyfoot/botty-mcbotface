@@ -96,10 +96,19 @@ class Bot:
                 ) and not bot_mentioned:
                     return
 
+            # Get image attachments from the message, if any
+            image_attachments = [
+                attachment
+                for attachment in getattr(message, "attachments", [])
+                if getattr(attachment, "content_type", "")
+                and attachment.content_type.startswith("image/")
+            ]
+            image_urls = [attachment.url for attachment in image_attachments]
+
             async with message.channel.typing():
                 channel_id = str(message.channel.id)
                 async for data_type, content in self.agent.respond(
-                    channel_id, message.content
+                    channel_id, message.content, image_urls
                 ):
                     if data_type == "text":
                         await message.channel.send(content)
