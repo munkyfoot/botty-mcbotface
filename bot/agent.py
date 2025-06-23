@@ -309,10 +309,16 @@ class Agent:
 
                 # If the underlying function is a coroutine we need to await it.
                 result: str | bytes | None
-                if asyncio.iscoroutinefunction(func):
-                    result = await func(**args)
-                else:
-                    result = func(**args)
+                success = False
+                try:
+                    if asyncio.iscoroutinefunction(func):
+                        result = await func(**args)
+                    else:
+                        result = func(**args)
+                    success = True
+                except Exception as e:
+                    logging.error(f"Error calling function {name}: {e}")
+                    result = f"Error calling function {name}: {e}"
 
                 # Append both the function call and its output to history
                 self._append_and_persist(
@@ -328,6 +334,9 @@ class Agent:
                         ),
                     },
                 )
+
+                if not success:
+                    continue
 
                 if name == "ping":
                     yield "text", result
