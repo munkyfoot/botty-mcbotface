@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from .commands import setup_commands
 from .agent import Agent
 from .config import load_settings
+from .s3 import S3
 
 load_dotenv()
 
@@ -24,15 +25,21 @@ class Bot:
         # Load settings
         self.settings = load_settings()
 
-        # Instantiate the shared Agent
         if not self.settings or None in self.settings.values():
             raise ValueError("Settings are not loaded or are missing values")
+
+        try:
+            self.s3 = S3()
+        except Exception as e:
+            print(f"Error initializing S3: {e}")
+            self.s3 = None
 
         self.agent = Agent(
             model=self.settings["model"],
             instructions=self.settings["instructions"],
             enable_web_search=self.settings["enable_web_search"],
             maximum_turns=self.settings["maximum_turns"],
+            s3=self.s3,
         )
 
         self._auto_respond_channels = self.settings["auto_respond_channels"]

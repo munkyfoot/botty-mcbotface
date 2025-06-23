@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Tuple, AsyncGenerator
 import os
 import base64
@@ -27,6 +28,7 @@ from .handlers import (
     handle_generate_meme,
 )
 from .state import StateStore
+from .s3 import S3
 
 
 class Agent:
@@ -38,13 +40,14 @@ class Agent:
         instructions: str,
         enable_web_search: bool,
         maximum_turns: int,
+        s3: S3 | None = None,
     ) -> None:
 
         self._model = model
         self._instructions = instructions
         self._enable_web_search = enable_web_search
         self._maximum_turns = maximum_turns
-
+        self._s3 = s3
         self._client = AsyncOpenAI()
         # Conversation history as list of message dicts [{role, content}]
 
@@ -314,18 +317,29 @@ class Agent:
 
                     if image_data:
                         if isinstance(image_data, bytes):
-                            image = Image.open(io.BytesIO(image_data))
-                            # Resize image to max 512px width/height, maintaining aspect ratio
-                            max_size = 512
-                            image.thumbnail(
-                                (max_size, max_size), Image.Resampling.LANCZOS
-                            )
-                            # Compress image to JPEG with quality=70
-                            buffer = io.BytesIO()
-                            image = image.convert("RGB")  # Ensure JPEG compatible
-                            image.save(buffer, format="JPEG", quality=70, optimize=True)
-                            compressed_data = buffer.getvalue()
-                            base64_image = base64.b64encode(compressed_data).decode()
+                            if self._s3:
+                                key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
+                                image_url = self._s3.public_upload(
+                                    io.BytesIO(image_data), key
+                                )
+                            else:
+                                image = Image.open(io.BytesIO(image_data))
+                                # Resize image to max 512px width/height, maintaining aspect ratio
+                                max_size = 512
+                                image.thumbnail(
+                                    (max_size, max_size), Image.Resampling.LANCZOS
+                                )
+                                # Compress image to JPEG with quality=70
+                                buffer = io.BytesIO()
+                                image = image.convert("RGB")  # Ensure JPEG compatible
+                                image.save(
+                                    buffer, format="JPEG", quality=70, optimize=True
+                                )
+                                compressed_data = buffer.getvalue()
+                                base64_image = base64.b64encode(
+                                    compressed_data
+                                ).decode()
+                                image_url = f"data:image/jpeg;base64,{base64_image}"
                             self._append_and_persist(
                                 channel_id,
                                 {
@@ -337,7 +351,7 @@ class Agent:
                                         },
                                         {
                                             "type": "input_image",
-                                            "image_url": f"data:image/jpeg;base64,{base64_image}",
+                                            "image_url": image_url,
                                         },
                                     ],
                                 },
