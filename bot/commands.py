@@ -1,9 +1,11 @@
+import base64
 import discord
 import io
 import re
-from typing import Literal
+from typing import Literal, Any
 from datetime import datetime, timezone
 
+from .agent import Agent
 from .handlers import (
     handle_ping,
     handle_roll,
@@ -11,10 +13,39 @@ from .handlers import (
     handle_generate_meme,
     handle_edit_image,
 )
+from .s3 import S3
 
 
-def setup_commands(tree: discord.app_commands.CommandTree) -> None:
+def setup_commands(
+    tree: discord.app_commands.CommandTree, agent: Agent, s3: S3 | None = None
+) -> None:
     """Set up all slash commands for the bot."""
+
+    async def _get_image_user_message(
+        base_message: str, image_data: bytes, filename: str
+    ) -> dict[str, Any]:
+        if s3:
+            image_url = s3.public_upload(io.BytesIO(image_data), filename)
+            image_context_message = f"Here is the image url: {image_url}"
+        else:
+            image_url = (
+                f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
+            )
+            image_context_message = "This is a base64 encoded image."
+
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": f"{base_message} {image_context_message}",
+                },
+                {
+                    "type": "input_image",
+                    "image_url": image_url,
+                },
+            ],
+        }
 
     @tree.command(name="ping", description="Replies with Pong!")
     async def _ping(
@@ -43,6 +74,14 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
             drop_n_highest=drop_n_highest,
         )
         await interaction.response.send_message(response, ephemeral=private)
+        if not private:
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                {
+                    "role": "system",
+                    "content": response,
+                },
+            )
 
     @tree.command(name="image", description="Generate an image based on a prompt")
     async def _image(  # noqa: D401, N802 — internal callback name
@@ -91,6 +130,21 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
         await interaction.edit_original_response(
             attachments=[file],
         )
+        if not private:
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                {
+                    "role": "system",
+                    "content": f"User generated an image with the prompt: {prompt}.",
+                },
+            )
+            user_message = await _get_image_user_message(
+                "Here is the generated image.", image_data, filename
+            )
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                user_message,
+            )
 
     @tree.command(name="meme", description="Generate a meme based on a prompt")
     async def _meme(  # noqa: D401, N802 — internal callback name
@@ -121,6 +175,21 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
         await interaction.edit_original_response(
             attachments=[file],
         )
+        if not private:
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                {
+                    "role": "system",
+                    "content": f"User generated a meme with the prompt: {image_prompt} and text: {text}.",
+                },
+            )
+            user_message = await _get_image_user_message(
+                "Here is the generated meme.", image_data, filename
+            )
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                user_message,
+            )
 
     @tree.command(name="edit", description="Edit an image based on a prompt")
     async def _edit(  # noqa: D401, N802 — internal callback name
@@ -163,3 +232,25 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
         await interaction.edit_original_response(
             attachments=[file],
         )
+        if not private:
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                {
+                    "role": "system",
+                    "content": f"User edited an image with the prompt: {prompt}.",
+                },
+            )
+            user_message_original = await _get_image_user_message(
+                "Here is the original image.", attachment_bytes, filename
+            )
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                user_message_original,
+            )
+            user_message_edited = await _get_image_user_message(
+                "Here is the edited image.", image_data, filename
+            )
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                user_message_edited,
+            )

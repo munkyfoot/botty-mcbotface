@@ -46,7 +46,7 @@ class Bot:
         self._dm_whitelist = self.settings["dm_whitelist"]
 
         # Set up slash commands from the commands module
-        setup_commands(self.tree)
+        setup_commands(self.tree, self.agent, self.s3)
 
         # ----------------------------
         # Event handlers
