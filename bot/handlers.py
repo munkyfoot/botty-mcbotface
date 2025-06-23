@@ -191,3 +191,55 @@ async def handle_generate_meme(
     meme_prompt = f"A meme of {image_prompt} with the text: {text}"
     image_data = await handle_generate_image(meme_prompt)
     return image_data
+
+
+async def handle_edit_image(
+    prompt: str,
+    image: bytes | str,
+) -> bytes | None:
+    """Edit an image based on a prompt.
+
+    Args:
+        prompt: The prompt to edit the image with.
+        input_image: The image to edit.
+
+    Returns:
+        bytes: The edited image.
+    """
+
+    if isinstance(image, (bytes, bytearray)):
+        input_image = io.BytesIO(image)
+    else:
+        input_image = image
+
+    output = await asyncio.to_thread(
+        replicate.run,
+        "black-forest-labs/flux-kontext-pro",
+        input={
+            "prompt": prompt,
+            "input_image": input_image,
+            "aspect_ratio": "match_input_image",
+            "output_format": "jpg",
+        },
+    )
+
+    # Some models return a list of URLs, others a single URL string.
+    if isinstance(output, list):
+        image_url = str(output[0]) if output else ""
+    else:
+        image_url = str(output)
+
+    if not image_url:
+        return None
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                else:
+                    return None
+    except Exception as e:  # noqa: BLE001
+        return None
+
+    return data

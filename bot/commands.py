@@ -9,6 +9,7 @@ from .handlers import (
     handle_roll,
     handle_generate_image,
     handle_generate_meme,
+    handle_edit_image,
 )
 
 
@@ -114,6 +115,48 @@ def setup_commands(tree: discord.app_commands.CommandTree) -> None:
 
         # Sanitize filename and create attachment
         filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", image_prompt) or "image"
+        filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=filename)
+
+        await interaction.edit_original_response(
+            attachments=[file],
+        )
+
+    @tree.command(name="edit", description="Edit an image based on a prompt")
+    async def _edit(  # noqa: D401, N802 — internal callback name
+        interaction: discord.Interaction,
+        prompt: str,
+        image: discord.Attachment,
+        private: bool = False,
+    ) -> None:
+        """Edit an image based on a prompt."""
+        # Defer the response to avoid "Unknown interaction" error
+        await interaction.response.defer(thinking=True, ephemeral=private)
+
+        # Read the uploaded attachment into memory so we can send raw bytes to the
+        # image-editing handler. Replicate expects a file-like object or bytes,
+        # not a Discord Attachment instance.
+        try:
+            attachment_bytes = await image.read()
+        except Exception:  # noqa: BLE001 — fallback for any I/O issues
+            await interaction.edit_original_response(
+                content="Failed to read the attached image."
+            )
+            return
+
+        # Call the image-editing handler (should return the edited image bytes)
+        image_data = await handle_edit_image(prompt, attachment_bytes)
+
+        if not image_data:
+            await interaction.edit_original_response(content="Failed to edit image.")
+            return
+
+        if not isinstance(image_data, bytes):
+            await interaction.edit_original_response(content="Failed to edit image.")
+            return
+
+        # Sanitize filename and create attachment
+        filesafe_name = re.sub(r"[^a-zA-Z0-9]", "_", prompt) or "image"
         filename = f"{filesafe_name}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
         file = discord.File(io.BytesIO(image_data), filename=filename)
 
