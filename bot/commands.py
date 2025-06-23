@@ -79,6 +79,13 @@ def setup_commands(
                 str(interaction.channel_id),
                 {
                     "role": "system",
+                    "content": f"User rolled {dice_value} {dice_count} times with a modifier of {dice_modifier} and dropped {drop_n_lowest} lowest and {drop_n_highest} highest.",
+                },
+            )
+            agent._append_and_persist(
+                str(interaction.channel_id),
+                {
+                    "role": "user",
                     "content": response,
                 },
             )
