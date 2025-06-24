@@ -368,6 +368,13 @@ class Agent:
 
                     if image_data:
                         if isinstance(image_data, bytes):
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "system",
+                                    "content": f"The generated image has already been sent to the user. Do NOT include it as part of your response.",
+                                },
+                            )
                             if self._s3:
                                 key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
                                 image_url, _ = prepare_image(image_data, self._s3, key)
