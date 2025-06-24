@@ -63,6 +63,10 @@ class Agent:
 
         # In-memory mapping channel_id -> responding state
         self._responding: Dict[str, bool] = {}
+        self._queued: Dict[str, bool] = {}
+
+        # Per-channel locks used to make flag updates atomic and avoid races
+        self._locks: Dict[str, asyncio.Lock] = {}
 
         # Pre-defined tools (functions) the model can call.
         self._tools: List[Dict[str, Any]] = [
@@ -269,155 +273,184 @@ class Agent:
             user_entry["content"] = f"<{user_name}> {user_message}"
         self._append_and_persist(channel_id, user_entry)
 
-        if channel_id not in self._responding:
+        if channel_id not in self._responding or channel_id not in self._queued:
             self._responding[channel_id] = False
+            self._queued[channel_id] = False
 
-        if self._responding[channel_id]:
-            return
-        self._responding[channel_id] = True
+        # ------------------------------------------------------------------
+        # Atomic check/set for responding & queued flags (race-free)
+        # ------------------------------------------------------------------
+        lock = self._locks.setdefault(channel_id, asyncio.Lock())
+        async with lock:
+            if self._responding[channel_id]:
+                # Another coroutine is already generating a reply – only mark
+                # that we have more messages queued and exit.
+                self._queued[channel_id] = True
+                return
+            self._responding[channel_id] = True
 
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
         # ------------------------------------------------------------------
-        turns = 0
-        while turns <= self._maximum_turns:
-            turns += 1
+        # Use try/finally so the flags are cleared even on errors or
+        # if the async-generator is closed prematurely by the caller.
+        try:
+            turns = 0
+            while turns <= self._maximum_turns:
+                # Clear queued flag if it's set to prevent unneeded turns.
+                if self._queued[channel_id]:
+                    self._queued[channel_id] = False
 
-            last_turn = turns == self._maximum_turns
-            if last_turn:
-                self._append_and_persist(
-                    channel_id,
-                    {
-                        "role": "system",
-                        "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
-                    },
+                turns += 1
+
+                last_turn = turns == self._maximum_turns
+                if last_turn:
+                    self._append_and_persist(
+                        channel_id,
+                        {
+                            "role": "system",
+                            "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
+                        },
+                    )
+                history = self._state.load_history(channel_id)
+                response = await self._safe_create_response(
+                    model=self._model,
+                    input=history,  # type: ignore[arg-type]
+                    tools=self._tools if not last_turn else [],  # type: ignore[arg-type]
+                    parallel_tool_calls=False,
+                    instructions=self._instructions,
+                    truncation="auto",
                 )
-            history = self._state.load_history(channel_id)
-            response = await self._safe_create_response(
-                model=self._model,
-                input=history,  # type: ignore[arg-type]
-                tools=self._tools if not last_turn else [],  # type: ignore[arg-type]
-                parallel_tool_calls=False,
-                instructions=self._instructions,
-                truncation="auto",
-            )
 
-            # Collect function calls, if any (SDK returns objects, not dicts)
-            tool_calls = [
-                item
-                for item in getattr(response, "output", [])
-                if getattr(item, "type", None) == "function_call"
-            ]
+                # Collect function calls, if any (SDK returns objects, not dicts)
+                tool_calls = [
+                    item
+                    for item in getattr(response, "output", [])
+                    if getattr(item, "type", None) == "function_call"
+                ]
 
-            if not tool_calls:
-                # No function calls – just return the model's text
-                assistant_text_resp: str = getattr(response, "output_text", "")
-                self._append_and_persist(
-                    channel_id, {"role": "assistant", "content": assistant_text_resp}
-                )
-                yield "text", assistant_text_resp
-                # We have produced a textual response, so end this respond() cycle.
-                break
+                if not tool_calls:
+                    # No function calls – just return the model's text
+                    assistant_text_resp: str = getattr(response, "output_text", "")
+                    self._append_and_persist(
+                        channel_id,
+                        {"role": "assistant", "content": assistant_text_resp},
+                    )
+                    yield "text", assistant_text_resp
 
-            # ------------------------------------------------------------------
-            # Step 3 – execute function calls and feed results back to the model
-            # ------------------------------------------------------------------
-            for tool_call in tool_calls:
-                name: str = getattr(tool_call, "name")
-                args_str: str = getattr(tool_call, "arguments", "{}")
-                try:
-                    args = json.loads(args_str) if args_str else {}
-                except json.JSONDecodeError:
-                    args = {}
-
-                # Route to implementation
-                func = self._function_map.get(name)
-                if func is None:
-                    # Unknown function – ignore
-                    continue
-
-                # If the underlying function is a coroutine we need to await it.
-                result: str | bytes | None
-                success = False
-                try:
-                    if asyncio.iscoroutinefunction(func):
-                        result = await func(**args)
+                    # We have produced a textual response, so end this respond() cycle, unless there are more messages queued.
+                    if self._queued[channel_id]:
+                        self._queued[channel_id] = False
+                        continue
                     else:
-                        result = func(**args)
-                    success = True
-                except Exception as e:
-                    logging.error(f"Error calling function {name}: {e}")
-                    result = f"Error calling function {name}: {e}"
+                        break
 
-                # Append both the function call and its output to history
-                self._append_and_persist(
-                    channel_id, json.loads(tool_call.model_dump_json())
-                )
-                self._append_and_persist(
-                    channel_id,
-                    {
-                        "type": "function_call_output",
-                        "call_id": getattr(tool_call, "call_id"),
-                        "output": (
-                            result if isinstance(result, str) else str(result)[:1024]
-                        ),
-                    },
-                )
+                # ------------------------------------------------------------------
+                # Step 3 – execute function calls and feed results back to the model
+                # ------------------------------------------------------------------
+                for tool_call in tool_calls:
+                    name: str = getattr(tool_call, "name")
+                    args_str: str = getattr(tool_call, "arguments", "{}")
+                    try:
+                        args = json.loads(args_str) if args_str else {}
+                    except json.JSONDecodeError:
+                        args = {}
 
-                if not success:
-                    continue
+                    # Route to implementation
+                    func = self._function_map.get(name)
+                    if func is None:
+                        # Unknown function – ignore
+                        continue
 
-                if name == "ping":
-                    yield "text", result
+                    # If the underlying function is a coroutine we need to await it.
+                    result: str | bytes | None
+                    success = False
+                    try:
+                        if asyncio.iscoroutinefunction(func):
+                            result = await func(**args)
+                        else:
+                            result = func(**args)
+                        success = True
+                    except Exception as e:
+                        logging.error(f"Error calling function {name}: {e}")
+                        result = f"Error calling function {name}: {e}"
 
-                if name == "roll_dice":
-                    yield "text", result
+                    # Append both the function call and its output to history
+                    self._append_and_persist(
+                        channel_id, json.loads(tool_call.model_dump_json())
+                    )
+                    self._append_and_persist(
+                        channel_id,
+                        {
+                            "type": "function_call_output",
+                            "call_id": getattr(tool_call, "call_id"),
+                            "output": (
+                                result
+                                if isinstance(result, str)
+                                else str(result)[:1024]
+                            ),
+                        },
+                    )
 
-                if name in ["generate_image", "generate_meme", "edit_image"]:
-                    image_data = result
+                    if not success:
+                        continue
 
-                    if image_data:
-                        if isinstance(image_data, bytes):
-                            self._append_and_persist(
-                                channel_id,
-                                {
-                                    "role": "system",
-                                    "content": f"The generated image has already been sent to the user. Do NOT include it as part of your response.",
-                                },
-                            )
-                            if self._s3:
-                                key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
-                                image_url, _ = prepare_image(image_data, self._s3, key)
-                                image_context_message = (
-                                    f"Here is the image url: {image_url}"
+                    if name == "ping":
+                        yield "text", result
+
+                    if name == "roll_dice":
+                        yield "text", result
+
+                    if name in ["generate_image", "generate_meme", "edit_image"]:
+                        image_data = result
+
+                        if image_data:
+                            if isinstance(image_data, bytes):
+                                self._append_and_persist(
+                                    channel_id,
+                                    {
+                                        "role": "system",
+                                        "content": f"The generated image has already been sent to the user. Do NOT include it as part of your response.",
+                                    },
                                 )
+                                if self._s3:
+                                    key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
+                                    image_url, _ = prepare_image(
+                                        image_data, self._s3, key
+                                    )
+                                    image_context_message = (
+                                        f"Here is the image url: {image_url}"
+                                    )
+                                else:
+                                    image_url, _ = prepare_image(image_data, None)
+                                    image_context_message = (
+                                        "This is a base64 encoded image."
+                                    )
+                                self._append_and_persist(
+                                    channel_id,
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "input_text",
+                                                "text": f"<{user_name}> Here is the image you generated. {image_context_message}",
+                                            },
+                                            {
+                                                "type": "input_image",
+                                                "image_url": image_url,
+                                            },
+                                        ],
+                                    },
+                                )
+                                yield "image_data", image_data  # Send uncompressed image
                             else:
-                                image_url, _ = prepare_image(image_data, None)
-                                image_context_message = (
-                                    "This is a base64 encoded image."
-                                )
-                            self._append_and_persist(
-                                channel_id,
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "input_text",
-                                            "text": f"<{user_name}> Here is the image you generated. {image_context_message}",
-                                        },
-                                        {
-                                            "type": "input_image",
-                                            "image_url": image_url,
-                                        },
-                                    ],
-                                },
-                            )
-                            yield "image_data", image_data  # Send uncompressed image
+                                yield "text", "Failed to generate image."
                         else:
                             yield "text", "Failed to generate image."
-                    else:
-                        yield "text", "Failed to generate image."
-        self._responding[channel_id] = False
+        finally:
+            # Ensure flags are cleared so the channel never gets stuck
+            self._responding[channel_id] = False
+            self._queued[channel_id] = False
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
@@ -426,6 +459,10 @@ class Agent:
         """Clear stored conversation history."""
         self._histories.pop(channel_id, None)
         self._state.reset(channel_id)
+        # Also clear any runtime flags/locks for this channel
+        self._responding.pop(channel_id, None)
+        self._queued.pop(channel_id, None)
+        self._locks.pop(channel_id, None)
 
     # ------------------------------------------------------------------
     # Internal helpers
