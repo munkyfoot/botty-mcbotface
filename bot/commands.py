@@ -15,7 +15,7 @@ from .handlers import (
     handle_edit_image,
 )
 from .s3 import S3
-from .utils import compress_image, get_base64_image_url
+from .utils import prepare_image
 
 
 def setup_commands(
@@ -27,14 +27,12 @@ def setup_commands(
         base_message: str, image_data: bytes, filename: str
     ) -> dict[str, Any]:
 
-        if s3:
-            compressed_data = compress_image(image_data)
-            image_url = s3.public_upload(io.BytesIO(compressed_data), filename)
-            image_context_message = f"Here is the image url: {image_url}"
-        else:
-            compressed_data = compress_image(image_data, max_size=512, quality=70)
-            image_url = get_base64_image_url(compressed_data)
-            image_context_message = "This is a base64 encoded image."
+        image_url, _ = prepare_image(image_data, s3, filename)
+        image_context_message = (
+            f"Here is the image url: {image_url}"
+            if s3
+            else "This is a base64 encoded image."
+        )
 
         return {
             "role": "user",

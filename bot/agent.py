@@ -28,7 +28,7 @@ from .handlers import (
 )
 from .state import StateStore
 from .s3 import S3
-from .utils import compress_image, get_base64_image_url
+from .utils import prepare_image
 
 
 class Agent:
@@ -367,17 +367,12 @@ class Agent:
                         if isinstance(image_data, bytes):
                             if self._s3:
                                 key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
-                                image_url = self._s3.public_upload(
-                                    io.BytesIO(image_data), key
-                                )
+                                image_url, _ = prepare_image(image_data, self._s3, key)
                                 image_context_message = (
                                     f"Here is the image url: {image_url}"
                                 )
                             else:
-                                compressed_data = compress_image(
-                                    image_data, max_size=512, quality=70
-                                )
-                                image_url = get_base64_image_url(compressed_data)
+                                image_url, _ = prepare_image(image_data, None)
                                 image_context_message = (
                                     "This is a base64 encoded image."
                                 )
