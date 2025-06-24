@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 from PIL import Image
 from typing import TYPE_CHECKING, Tuple
 import uuid
@@ -80,3 +81,60 @@ def prepare_image(
     )
     image_url = get_base64_image_url(compressed)
     return image_url, compressed
+
+
+def chunk_text(text: str, max_length: int) -> list[str]:
+    """
+    Break up a blob of text into multiple chunks, each with a maximum length of max_length.
+    Uses a hierarchy of delimiters to break up chunks cleanly when possible: '\n', '. ', ', '.
+
+    Parameters
+    ----------
+    text : str
+        The input text to be chunked.
+    max_length : int
+        The maximum length of each chunk.
+
+    Returns
+    -------
+    list[str]
+        List of text chunks.
+    """
+    delimiters = ["\n", ". ", ", "]
+
+    def _split(text, max_length, delimiters):
+        if len(text) <= max_length:
+            return [text]
+        if not delimiters:
+            # No more delimiters, just split hard
+            return [text[i : i + max_length] for i in range(0, len(text), max_length)]
+        delim = delimiters[0]
+        parts = []
+        start = 0
+        while start < len(text):
+            # Find the furthest delimiter within max_length
+            end = min(start + max_length, len(text))
+            chunk = text[start:end]
+            split_idx = chunk.rfind(delim)
+            if split_idx == -1 or (start + split_idx + len(delim) - start) < 1:
+                # No delimiter found, or it's at the start, try next delimiter
+                if len(delimiters) > 1:
+                    # Try with next delimiter
+                    subchunks = _split(chunk, max_length, delimiters[1:])
+                    parts.extend(subchunks)
+                    start += len(chunk)
+                else:
+                    # No more delimiters, hard split
+                    parts.append(chunk)
+                    start += len(chunk)
+            else:
+                # Found a delimiter, split here
+                split_point = start + split_idx + len(delim)
+                parts.append(text[start:split_point])
+                start = split_point
+        return parts
+
+    # Remove leading/trailing whitespace from each chunk
+    return [
+        chunk.strip() for chunk in _split(text, max_length, delimiters) if chunk.strip()
+    ]

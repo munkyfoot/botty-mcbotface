@@ -4,7 +4,7 @@ import discord
 import io
 from datetime import datetime, timezone
 
-from bot.utils import prepare_image
+from bot.utils import prepare_image, chunk_text
 
 from .commands import setup_commands
 from .agent import Agent
@@ -120,7 +120,8 @@ class Bot:
                     channel_id, message.content, message.author.name, image_urls
                 ):
                     if data_type == "text":
-                        await message.channel.send(content)
+                        for chunk in chunk_text(content, 2000):
+                            await message.channel.send(chunk)
                     elif data_type == "image_data":
                         data = content
                         if not data or not isinstance(data, bytes):
