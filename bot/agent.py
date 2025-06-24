@@ -61,6 +61,9 @@ class Agent:
         # In-memory mapping channel_id -> history list
         self._histories: Dict[str, List[Dict[str, Any]]] = {}
 
+        # In-memory mapping channel_id -> responding state
+        self._responding: Dict[str, bool] = {}
+
         # Pre-defined tools (functions) the model can call.
         self._tools: List[Dict[str, Any]] = [
             {
@@ -266,6 +269,13 @@ class Agent:
             user_entry["content"] = f"<{user_name}> {user_message}"
         self._append_and_persist(channel_id, user_entry)
 
+        if channel_id not in self._responding:
+            self._responding[channel_id] = False
+
+        if self._responding[channel_id]:
+            return
+        self._responding[channel_id] = True
+
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
         # ------------------------------------------------------------------
@@ -407,6 +417,7 @@ class Agent:
                             yield "text", "Failed to generate image."
                     else:
                         yield "text", "Failed to generate image."
+        self._responding[channel_id] = False
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
