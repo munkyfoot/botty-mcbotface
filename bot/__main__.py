@@ -41,6 +41,7 @@ class Bot:
             instructions=self.settings["instructions"],
             enable_web_search=self.settings["enable_web_search"],
             maximum_turns=self.settings["maximum_turns"],
+            maximum_user_messages=self.settings["maximum_user_messages"],
             s3=self.s3,
         )
 

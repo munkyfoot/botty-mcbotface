@@ -40,6 +40,7 @@ class Agent:
         instructions: str,
         enable_web_search: bool,
         maximum_turns: int,
+        maximum_user_messages: int,
         s3: S3 | None = None,
     ) -> None:
 
@@ -47,6 +48,7 @@ class Agent:
         self._instructions = instructions
         self._enable_web_search = enable_web_search
         self._maximum_turns = maximum_turns
+        self._maximum_user_messages = maximum_user_messages
         self._s3 = s3
         self._client = AsyncOpenAI()
         # Conversation history as list of message dicts [{role, content}]
@@ -54,7 +56,7 @@ class Agent:
         # ------------------------------------------------------------------
         # Persistence setup via StateStore
         # ------------------------------------------------------------------
-        self._state = StateStore()
+        self._state = StateStore(maximum_user_messages=self._maximum_user_messages)
 
         # In-memory mapping channel_id -> history list
         self._histories: Dict[str, List[Dict[str, Any]]] = {}
@@ -401,12 +403,9 @@ class Agent:
     # ------------------------------------------------------------------
     # Optional: reset conversation history
     # ------------------------------------------------------------------
-    def reset(self, channel_id: str | None = None) -> None:
+    def reset(self, channel_id: str) -> None:
         """Clear stored conversation history."""
-        if channel_id is None:
-            self._histories.clear()
-        else:
-            self._histories.pop(channel_id, None)
+        self._histories.pop(channel_id, None)
         self._state.reset(channel_id)
 
     # ------------------------------------------------------------------
@@ -436,9 +435,8 @@ class Agent:
     # ------------------------------------------------------------------
     def _append_and_persist(self, channel_id: str, message: Dict[str, Any]) -> None:
         """Append a message to in-memory history and persist via StateStore."""
-        history = self._histories.setdefault(channel_id, [])
-        history.append(message)
         try:
-            self._state.append(channel_id, message)
+            history = self._state.append(channel_id, message)
+            self._histories[channel_id] = history
         except Exception as exc:  # noqa: BLE001
             logging.error("Failed to persist agent message: %s", exc)
