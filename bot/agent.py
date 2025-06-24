@@ -225,6 +225,7 @@ class Agent:
         self,
         channel_id: str,
         user_message: str,
+        user_name: str,
         image_urls: List[str] = [],
     ) -> AsyncGenerator[Tuple[str, Any], None]:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
@@ -232,6 +233,7 @@ class Agent:
         Args:
             channel_id (str): The ID of the conversation channel.
             user_message (str): The raw content of the user's message.
+            user_name (str): The name of the user.
             image_urls (List[str]): The URLs of the images attached to the user's message.
         Returns:
             str: The assistant's final textual response ready to be sent.
@@ -245,8 +247,6 @@ class Agent:
             hist = self._state.load_history(channel_id)
             self._histories[channel_id] = hist
 
-        history = self._histories[channel_id]
-
         user_entry: Dict[str, Any] = {"role": "user"}
         if image_urls and len(image_urls) > 0:
             image_context_message = (
@@ -255,7 +255,7 @@ class Agent:
             user_entry["content"] = [
                 {
                     "type": "input_text",
-                    "text": f"{user_message}\n{image_context_message}",
+                    "text": f"<{user_name}> {user_message}\n{image_context_message}",
                 },
                 *[
                     {"type": "input_image", "image_url": image_url}
@@ -263,7 +263,7 @@ class Agent:
                 ],
             ]
         else:
-            user_entry["content"] = user_message
+            user_entry["content"] = f"<{user_name}> {user_message}"
         self._append_and_persist(channel_id, user_entry)
 
         # ------------------------------------------------------------------
@@ -282,6 +282,7 @@ class Agent:
                         "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
                     },
                 )
+            history = self._state.load_history(channel_id)
             response = await self._safe_create_response(
                 model=self._model,
                 input=history,  # type: ignore[arg-type]
@@ -385,7 +386,7 @@ class Agent:
                                     "content": [
                                         {
                                             "type": "input_text",
-                                            "text": f"Here is the image you generated. {image_context_message}",
+                                            "text": f"<{user_name}> Here is the image you generated. {image_context_message}",
                                         },
                                         {
                                             "type": "input_image",

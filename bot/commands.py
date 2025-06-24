@@ -24,7 +24,7 @@ def setup_commands(
     """Set up all slash commands for the bot."""
 
     async def _get_image_user_message(
-        base_message: str, image_data: bytes, filename: str
+        base_message: str, image_data: bytes, filename: str, user_name: str
     ) -> dict[str, Any]:
 
         image_url, _ = prepare_image(image_data, s3, filename)
@@ -39,7 +39,7 @@ def setup_commands(
             "content": [
                 {
                     "type": "input_text",
-                    "text": f"{base_message} {image_context_message}",
+                    "text": f"<{user_name}> {base_message} {image_context_message}",
                 },
                 {
                     "type": "input_image",
@@ -80,14 +80,14 @@ def setup_commands(
                 str(interaction.channel_id),
                 {
                     "role": "system",
-                    "content": f"User rolled {dice_value} {dice_count} times with a modifier of {dice_modifier} and dropped {drop_n_lowest} lowest and {drop_n_highest} highest.",
+                    "content": f"{interaction.user.name} rolled {dice_value} {dice_count} times with a modifier of {dice_modifier} and dropped {drop_n_lowest} lowest and {drop_n_highest} highest.",
                 },
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
                 {
                     "role": "user",
-                    "content": response,
+                    "content": f"<{interaction.user.name}> {response}",
                 },
             )
 
@@ -142,11 +142,11 @@ def setup_commands(
                 str(interaction.channel_id),
                 {
                     "role": "system",
-                    "content": f"User generated an image with the prompt: {prompt}.",
+                    "content": f"{interaction.user.name} generated an image with the prompt: {prompt}.",
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated image.", image_data, key
+                "Here is the generated image.", image_data, key, interaction.user.name
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -186,11 +186,11 @@ def setup_commands(
                 str(interaction.channel_id),
                 {
                     "role": "system",
-                    "content": f"User generated a meme with the prompt: {image_prompt} and text: {text}.",
+                    "content": f"{interaction.user.name} generated a meme with the prompt: {image_prompt} and text: {text}.",
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated meme.", image_data, key
+                "Here is the generated meme.", image_data, key, interaction.user.name
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -243,18 +243,24 @@ def setup_commands(
                 str(interaction.channel_id),
                 {
                     "role": "system",
-                    "content": f"User edited an image with the prompt: {prompt}.",
+                    "content": f"{interaction.user.name} edited an image with the prompt: {prompt}.",
                 },
             )
             user_message_original = await _get_image_user_message(
-                "Here is the original image.", attachment_bytes, original_key
+                "Here is the original image.",
+                attachment_bytes,
+                original_key,
+                interaction.user.name,
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
                 user_message_original,
             )
             user_message_edited = await _get_image_user_message(
-                "Here is the edited image.", image_data, edited_key
+                "Here is the edited image.",
+                image_data,
+                edited_key,
+                interaction.user.name,
             )
             agent._append_and_persist(
                 str(interaction.channel_id),

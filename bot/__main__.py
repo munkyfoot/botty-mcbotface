@@ -117,7 +117,7 @@ class Bot:
             async with message.channel.typing():
                 channel_id = str(message.channel.id)
                 async for data_type, content in self.agent.respond(
-                    channel_id, message.content, image_urls
+                    channel_id, message.content, message.author.name, image_urls
                 ):
                     if data_type == "text":
                         await message.channel.send(content)
