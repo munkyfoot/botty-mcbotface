@@ -266,3 +266,36 @@ def setup_commands(
                 str(interaction.channel_id),
                 user_message_edited,
             )
+
+    @tree.command(name="clear", description="Clear the conversation history")
+    async def _clear(  # noqa: D401, N802 — internal callback name
+        interaction: discord.Interaction,
+    ) -> None:
+        """Clear the conversation history. Only allowed in DMs or by server admins."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # Check if DM or server admin
+        if interaction.guild is None:
+            # DM context, allow
+            allowed = True
+        else:
+            # Guild context, check admin
+            member = interaction.user
+            # member is discord.Member in guild, discord.User in DM
+            allowed = False
+            if isinstance(member, discord.Member):
+                allowed = member.guild_permissions.administrator
+
+        if not allowed:
+            await interaction.edit_original_response(
+                content="You must be a server admin to clear the conversation history in this channel."
+            )
+            return
+
+        try:
+            agent.reset(str(interaction.channel_id))
+            await interaction.edit_original_response(content="Memory wiped.")
+        except Exception as e:
+            await interaction.edit_original_response(
+                content=f"Failed to wipe memory: {e}"
+            )
