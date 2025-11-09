@@ -122,18 +122,13 @@ async def handle_generate_image(
     prompt: str,
     aspect_ratio: Literal[
         "1:1",
-        "16:9",
-        "9:16",
         "4:3",
         "3:4",
+        "16:9",
+        "9:16",
         "3:2",
         "2:3",
-        "4:5",
-        "5:4",
         "21:9",
-        "9:21",
-        "2:1",
-        "1:2",
     ] = "1:1",
 ) -> bytes | None:
     """Generate an image based on a prompt.
@@ -147,12 +142,12 @@ async def handle_generate_image(
 
     output = await asyncio.to_thread(
         replicate.run,
-        "black-forest-labs/flux-kontext-pro",
+        "bytedance/seedream-4",
         input={
             "prompt": prompt,
+            "size": "2K",
             "aspect_ratio": aspect_ratio,
-            "output_format": "jpg",
-            "safety_tolerance": 6,
+            "enhance_prompt": True,
         },
     )
 
@@ -214,12 +209,13 @@ async def handle_edit_image(
 
     output = await asyncio.to_thread(
         replicate.run,
-        "black-forest-labs/flux-kontext-pro",
+        "bytedance/seedream-4",
         input={
             "prompt": prompt,
-            "input_image": input_image,
+            "image_input": [input_image],
+            "size": "2K",
             "aspect_ratio": "match_input_image",
-            "output_format": "jpg",
+            "enhance_prompt": True,
         },
     )
 
