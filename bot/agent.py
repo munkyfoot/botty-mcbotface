@@ -30,6 +30,36 @@ from .state import StateStore
 from .s3 import S3
 from .utils import prepare_image
 
+_DEFAULT_REASONING_LEVEL = "medium"
+_REASONING_LEVEL_CANONICAL: dict[str, str] = {
+    "none": "none",
+    "off": "none",
+    "disabled": "none",
+    "minimal": "minimal",
+    "min": "minimal",
+    "low": "low",
+    "light": "low",
+    "quick": "low",
+    "fast": "low",
+    "medium": "medium",
+    "balanced": "medium",
+    "standard": "medium",
+    "default": "medium",
+    "normal": "medium",
+    "high": "high",
+    "deep": "high",
+    "intense": "high",
+    "intensive": "high",
+    "max": "high",
+}
+_REASONING_EFFORT: dict[str, str | None] = {
+    "none": None,
+    "minimal": "minimal",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
+
 
 class Agent:
     """A simple stateful agent that uses OpenAI Responses API with function calling."""
@@ -41,6 +71,7 @@ class Agent:
         enable_web_search: bool,
         maximum_turns: int,
         maximum_user_messages: int,
+        reasoning_level: str | None = None,
         s3: S3 | None = None,
     ) -> None:
 
@@ -51,6 +82,9 @@ class Agent:
         self._maximum_user_messages = maximum_user_messages
         self._s3 = s3
         self._client = AsyncOpenAI()
+        self._reasoning_warning_logged = False
+        self._reasoning_level = self._normalize_reasoning_level(reasoning_level)
+        self._maybe_log_reasoning_ignored()
         # Conversation history as list of message dicts [{role, content}]
 
         # ------------------------------------------------------------------
@@ -312,22 +346,39 @@ class Agent:
                             "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
                         },
                     )
-                history = self._state.load_history(channel_id)
-                response = await self._safe_create_response(
-                    model=self._model,
-                    input=history,  # type: ignore[arg-type]
-                    tools=self._tools if not last_turn else [],  # type: ignore[arg-type]
-                    parallel_tool_calls=False,
-                    instructions=self._instructions,
-                    truncation="auto",
-                )
+                raw_history = self._state.load_history(channel_id)
+                history = self._prepare_history_for_model(raw_history)
+                response_kwargs: Dict[str, Any] = {
+                    "model": self._model,
+                    "input": history,  # type: ignore[arg-type]
+                    "tools": self._tools if not last_turn else [],  # type: ignore[arg-type]
+                    "parallel_tool_calls": False,
+                    "instructions": self._instructions,
+                    "truncation": "auto",
+                }
 
-                # Collect function calls, if any (SDK returns objects, not dicts)
-                tool_calls = [
-                    item
-                    for item in getattr(response, "output", [])
-                    if getattr(item, "type", None) == "function_call"
-                ]
+                reasoning_payload = self._reasoning_request_payload()
+                if reasoning_payload:
+                    response_kwargs.update(reasoning_payload)
+
+                response = await self._safe_create_response(**response_kwargs)
+
+                output_items = list(getattr(response, "output", []))
+                tool_calls = []
+                for item in output_items:
+                    item_type = getattr(item, "type", None)
+                    if item_type not in {"reasoning", "function_call"}:
+                        continue
+
+                    try:
+                        serialized = json.loads(item.model_dump_json())
+                    except (TypeError, ValueError):
+                        continue
+
+                    self._append_and_persist(channel_id, serialized)
+
+                    if item_type == "function_call":
+                        tool_calls.append(item)
 
                 if not tool_calls:
                     # No function calls – just return the model's text
@@ -376,9 +427,6 @@ class Agent:
                         result = f"Error calling function {name}: {e}"
 
                     # Append both the function call and its output to history
-                    self._append_and_persist(
-                        channel_id, json.loads(tool_call.model_dump_json())
-                    )
                     self._append_and_persist(
                         channel_id,
                         {
@@ -464,6 +512,16 @@ class Agent:
         self._queued.pop(channel_id, None)
         self._locks.pop(channel_id, None)
 
+    def set_reasoning_level(self, level: str | None) -> None:
+        """Update the reasoning level for future GPT-5 calls."""
+        self._reasoning_level = self._normalize_reasoning_level(level)
+        self._reasoning_warning_logged = False
+        self._maybe_log_reasoning_ignored()
+
+    def get_reasoning_level(self) -> str:
+        """Return the canonical reasoning level currently configured."""
+        return self._reasoning_level
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -496,3 +554,70 @@ class Agent:
             self._histories[channel_id] = history
         except Exception as exc:  # noqa: BLE001
             logging.error("Failed to persist agent message: %s", exc)
+
+    def _prepare_history_for_model(
+        self, history: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        sanitized: List[Dict[str, Any]] = []
+        for item in history:
+            sanitized_item = self._sanitize_response_item(item)
+            sanitized.append(sanitized_item)
+        return sanitized
+
+    def _sanitize_response_item(self, item: Any) -> Any:
+        if isinstance(item, dict):
+            cleaned: Dict[str, Any] = {}
+            for key, value in item.items():
+                if key == "status":
+                    continue
+                cleaned[key] = self._sanitize_response_item(value)
+            return cleaned
+        if isinstance(item, list):
+            return [self._sanitize_response_item(elem) for elem in item]
+        return item
+
+    def _reasoning_request_payload(self) -> Dict[str, Any]:
+        if not self._model_supports_reasoning(self._model):
+            return {}
+
+        if self._reasoning_level == "none":
+            return {}
+
+        effort = _REASONING_EFFORT.get(self._reasoning_level)
+        if not effort:
+            return {}
+
+        return {"reasoning": {"effort": effort}}
+
+    def _normalize_reasoning_level(self, level: str | None) -> str:
+        if level is None:
+            canonical = _DEFAULT_REASONING_LEVEL
+        else:
+            canonical = _REASONING_LEVEL_CANONICAL.get(level.strip().lower())
+            if canonical is None:
+                valid = sorted(set(_REASONING_LEVEL_CANONICAL.values()))
+                raise ValueError(
+                    "Unsupported reasoning level %r. Valid options: %s"
+                    % (level, ", ".join(valid))
+                )
+
+        return canonical
+
+    def _maybe_log_reasoning_ignored(self) -> None:
+        if self._reasoning_warning_logged:
+            return
+
+        if self._reasoning_level != "none" and not self._model_supports_reasoning(
+            self._model
+        ):
+            logging.info(
+                "Reasoning level '%s' configured but model '%s' is not a GPT-5 family model; reasoning payload will be ignored.",
+                self._reasoning_level,
+                self._model,
+            )
+            self._reasoning_warning_logged = True
+
+    @staticmethod
+    def _model_supports_reasoning(model: str) -> bool:
+        base_name = model.split("@", 1)[0]
+        return base_name.startswith("gpt-5")
