@@ -176,18 +176,13 @@ class Agent:
                             "description": "Desired aspect ratio for the image (e.g., 1:1, 16:9)",
                             "enum": [
                                 "1:1",
-                                "16:9",
-                                "9:16",
                                 "4:3",
                                 "3:4",
+                                "16:9",
+                                "9:16",
                                 "3:2",
                                 "2:3",
-                                "4:5",
-                                "5:4",
                                 "21:9",
-                                "9:21",
-                                "2:1",
-                                "1:2",
                             ],
                             "default": "1:1",
                         },
@@ -367,7 +362,7 @@ class Agent:
                 tool_calls = []
                 for item in output_items:
                     item_type = getattr(item, "type", None)
-                    if item_type not in {"reasoning", "function_call"}:
+                    if item_type not in {"reasoning", "function_call", "message"}:
                         continue
 
                     try:
