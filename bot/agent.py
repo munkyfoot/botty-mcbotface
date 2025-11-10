@@ -106,6 +106,22 @@ class Agent:
         self._tools: List[Dict[str, Any]] = [
             {
                 "type": "function",
+                "name": "quick_message",
+                "description": "Send a quick message to the user and prepare to take an action next turn. Use this before and between tool calls to keep the user informed while performing sequential actions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "The message to send to the user."
+                        }
+                    },
+                    "required": ["message"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "type": "function",
                 "name": "ping",
                 "description": "Simple health-check that replies with Pong! 🏓",
                 "strict": True,
@@ -247,6 +263,7 @@ class Agent:
 
         # Local mapping of function names -> callables that implement them
         self._function_map = {
+            "quick_message": lambda message: message,
             "ping": handle_ping,
             "roll_dice": handle_roll,
             "generate_image": handle_generate_image,
@@ -437,6 +454,9 @@ class Agent:
 
                     if not success:
                         continue
+
+                    if name == "quick_message":
+                        yield "text", result
 
                     if name == "ping":
                         yield "text", result
