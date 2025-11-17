@@ -145,7 +145,7 @@ async def handle_generate_image(
         "bytedance/seedream-4",
         input={
             "prompt": prompt,
-            "size": "2K",
+            "size": "1K",
             "aspect_ratio": aspect_ratio,
             "enhance_prompt": True,
         },
@@ -213,7 +213,7 @@ async def handle_edit_image(
         input={
             "prompt": prompt,
             "image_input": [input_image],
-            "size": "2K",
+            "size": "1K",
             "aspect_ratio": "match_input_image",
             "enhance_prompt": True,
         },
