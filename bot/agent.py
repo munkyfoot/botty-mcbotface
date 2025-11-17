@@ -53,7 +53,7 @@ _REASONING_LEVEL_CANONICAL: dict[str, str] = {
     "max": "high",
 }
 _REASONING_EFFORT: dict[str, str | None] = {
-    "none": None,
+    "none": "none",
     "minimal": "minimal",
     "low": "low",
     "medium": "medium",
