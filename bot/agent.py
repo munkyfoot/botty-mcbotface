@@ -536,16 +536,33 @@ class Agent:
                                     channel_id,
                                     {
                                         "role": "developer",
+                                        "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent."
+                                        # [
+                                        #     {
+                                        #         "type": "input_text",
+                                        # "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
+                                        #     },
+                                        #     {
+                                        #         "type": "input_image",
+                                        #         "image_url": image_url,
+                                        #     },
+                                        # ],
+                                    },
+                                )
+                                self._append_and_persist(
+                                    channel_id,
+                                    {
+                                        "role": "user",
                                         "content": [
                                             {
                                                 "type": "input_text",
-                                        "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
+                                                "text": f"[System: This is the image you just generated, provided for your reference. This is not a user message.] {image_context_message}",
                                             },
                                             {
                                                 "type": "input_image",
                                                 "image_url": image_url,
                                             },
-                                        ],
+                                        ]
                                     },
                                 )
                                 yield "image_data", image_data  # Send uncompressed image
