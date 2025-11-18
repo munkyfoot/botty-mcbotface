@@ -90,43 +90,9 @@ class Bot:
             # Send the welcome message if we found a suitable channel and have permissions
             if welcome_channel and welcome_channel.permissions_for(guild.me).send_messages:
                 try:
-                    async with welcome_channel.typing():
-                        channel_id = str(welcome_channel.id)
-                        intro_message = f"Welcome to the {guild.name} server! Please introduce yourself to the server and tell us what you can do!"
-                        async for data_type, content in self.agent.respond(
-                            channel_id, intro_message, "onboarding_bot"
-                        ):
-                            if data_type == "text":
-                                for chunk in chunk_text(content, 2000):
-                                    await welcome_channel.send(chunk)
-                            elif data_type == "image_data":
-                                data = content
-                                if not data or not isinstance(data, bytes):
-                                    await welcome_channel.send(
-                                        "Failed to download generated image."
-                                    )
-                                    return
-                                # Sanitize filename and create attachment
-                                filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-                                file = discord.File(io.BytesIO(data), filename=filename)
-                                await welcome_channel.send(file=file)
-                            elif data_type == "poll":
-                                data = content
-                                try:
-                                    poll = discord.Poll(
-                                        question=data["question"],
-                                        duration=timedelta(hours=data.get("duration", 24)),
-                                        multiple=data.get("multiple", False),
-                                    )
-
-                                    for option in data.get("options", []):
-                                        poll.add_answer(text=option)
-
-                                    await welcome_channel.send(poll=poll)
-                                except Exception as e:
-                                    await welcome_channel.send(f"Failed to create poll: {e}")
-                            else:
-                                raise ValueError(f"Unknown data type: {data_type}")
+                    channel_id = str(welcome_channel.id)
+                    intro_message = f"Welcome to the {guild.name} server! Please introduce yourself to the server and tell us what you can do!"
+                    await self._send_agent_response(welcome_channel, channel_id, intro_message, "onboarding_bot")
                 except discord.HTTPException:
                     pass
 
@@ -172,42 +138,59 @@ class Bot:
                 image_url, _ = prepare_image(image_data, self.s3, key)
                 image_urls.append(image_url)
 
-            async with message.channel.typing():
-                channel_id = str(message.channel.id)
-                async for data_type, content in self.agent.respond(
-                    channel_id, message.content, message.author.name, image_urls
-                ):
-                    if data_type == "text":
-                        for chunk in chunk_text(content, 2000):
-                            await message.channel.send(chunk)
-                    elif data_type == "image_data":
-                        data = content
-                        if not data or not isinstance(data, bytes):
-                            await message.channel.send(
-                                "Failed to download generated image."
-                            )
-                            return
-                        # Sanitize filename and create attachment
-                        filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
-                        file = discord.File(io.BytesIO(data), filename=filename)
-                        await message.channel.send(file=file)
-                    elif data_type == "poll":
-                        data = content
-                        try:
-                            poll = discord.Poll(
-                                question=data["question"],
-                                duration=timedelta(hours=data.get("duration", 24)),
-                                multiple=data.get("multiple", False),
-                            )
+            channel_id = str(message.channel.id)
+            await self._send_agent_response(message.channel, channel_id, message.content, message.author.name, image_urls)
 
-                            for option in data.get("options", []):
-                                poll.add_answer(text=option)
+    # ----------------------------
+    # Helper methods
+    # ----------------------------
+    async def _send_agent_response(
+        self, channel: discord.abc.Messageable, channel_id: str, prompt: str, username: str, image_urls: list[str] = None
+    ):
+        """Send agent response to a channel, handling text, images, and polls.
+        
+        Args:
+            channel: The Discord channel to send messages to.
+            channel_id: The channel ID string for agent context.
+            prompt: The prompt to send to the agent.
+            username: The username of the requester.
+            image_urls: Optional list of image URLs to include in the request.
+        """
+        async with channel.typing():
+            async for data_type, content in self.agent.respond(
+                channel_id, prompt, username, image_urls or []
+            ):
+                if data_type == "text":
+                    for chunk in chunk_text(content, 2000):
+                        await channel.send(chunk)
+                elif data_type == "image_data":
+                    data = content
+                    if not data or not isinstance(data, bytes):
+                        await channel.send(
+                            "Failed to download generated image."
+                        )
+                        return
+                    # Sanitize filename and create attachment
+                    filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+                    file = discord.File(io.BytesIO(data), filename=filename)
+                    await channel.send(file=file)
+                elif data_type == "poll":
+                    data = content
+                    try:
+                        poll = discord.Poll(
+                            question=data["question"],
+                            duration=timedelta(hours=data.get("duration", 24)),
+                            multiple=data.get("multiple", False),
+                        )
 
-                            await message.channel.send(poll=poll)
-                        except Exception as e:
-                            await message.channel.send(f"Failed to create poll: {e}")
-                    else:
-                        raise ValueError(f"Unknown data type: {data_type}")
+                        for option in data.get("options", []):
+                            poll.add_answer(text=option)
+
+                        await channel.send(poll=poll)
+                    except Exception as e:
+                        await channel.send(f"Failed to create poll: {e}")
+                else:
+                    raise ValueError(f"Unknown data type: {data_type}")
 
     # ----------------------------
     # Public helpers
