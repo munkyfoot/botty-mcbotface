@@ -74,6 +74,63 @@ class Bot:
                 print(f"Failed to sync commands: {exc}")
 
         @self.client.event
+        async def on_guild_join(guild: discord.Guild):
+            """Called when the bot joins a new server."""
+            # Try to find the first channel we can send messages to
+            # Try to send a welcome message to the server's system channel or a welcome channel
+            welcome_channel = guild.system_channel
+            
+            # If no system channel, look for a channel named 'welcome' or 'general'
+            if not welcome_channel:
+                for channel in guild.text_channels:
+                    if channel.name.lower() in ['welcome', 'general']:
+                        welcome_channel = channel
+                        break
+            
+            # Send the welcome message if we found a suitable channel and have permissions
+            if welcome_channel and welcome_channel.permissions_for(guild.me).send_messages:
+                try:
+                    async with welcome_channel.typing():
+                        channel_id = str(welcome_channel.id)
+                        intro_message = f"Welcome to the {guild.name} server! Please introduce yourself to the server and tell us what you can do!"
+                        async for data_type, content in self.agent.respond(
+                            channel_id, intro_message, "onboarding_bot"
+                        ):
+                            if data_type == "text":
+                                for chunk in chunk_text(content, 2000):
+                                    await welcome_channel.send(chunk)
+                            elif data_type == "image_data":
+                                data = content
+                                if not data or not isinstance(data, bytes):
+                                    await welcome_channel.send(
+                                        "Failed to download generated image."
+                                    )
+                                    return
+                                # Sanitize filename and create attachment
+                                filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
+                                file = discord.File(io.BytesIO(data), filename=filename)
+                                await welcome_channel.send(file=file)
+                            elif data_type == "poll":
+                                data = content
+                                try:
+                                    poll = discord.Poll(
+                                        question=data["question"],
+                                        duration=timedelta(hours=data.get("duration", 24)),
+                                        multiple=data.get("multiple", False),
+                                    )
+
+                                    for option in data.get("options", []):
+                                        poll.add_answer(text=option)
+
+                                    await welcome_channel.send(poll=poll)
+                                except Exception as e:
+                                    await welcome_channel.send(f"Failed to create poll: {e}")
+                            else:
+                                raise ValueError(f"Unknown data type: {data_type}")
+                except discord.HTTPException:
+                    pass
+
+        @self.client.event
         async def on_message(
             message: discord.Message,
         ):  # noqa: D401 — Discord.py callback signature
