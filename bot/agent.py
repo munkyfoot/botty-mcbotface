@@ -320,6 +320,7 @@ class Agent:
         user_message: str,
         user_name: str,
         image_urls: List[str] = [],
+        server_context: str | None = None,
     ) -> AsyncGenerator[Tuple[str, Any], None]:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
 
@@ -405,7 +406,9 @@ class Agent:
                     "input": history,  # type: ignore[arg-type]
                     "tools": self._tools if not last_turn else [],  # type: ignore[arg-type]
                     "parallel_tool_calls": False,
-                    "instructions": self._instructions,
+                    "instructions": "\n\n".join([self._instructions, server_context])
+                    if server_context
+                    else self._instructions,
                     "truncation": "auto",
                 }
 

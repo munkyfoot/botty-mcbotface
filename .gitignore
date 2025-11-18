@@ -16,3 +16,6 @@ venv/
 
 # Settings
 settings.json
+
+# Notes
+NOTES.md

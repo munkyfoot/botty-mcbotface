@@ -182,9 +182,17 @@ class Bot:
             username: The username of the requester.
             image_urls: Optional list of image URLs to include in the request.
         """
+        server_context = None
+        if isinstance(channel, discord.TextChannel):
+            server_context = f"Server name: {channel.guild.name}"
+            if channel.guild.description:
+                server_context += f"\nServer description: {channel.guild.description}"
+            if channel.topic:
+                server_context += f"\nChannel topic: {channel.topic}"
+
         async with channel.typing():
             async for data_type, content in self.agent.respond(
-                channel_id, prompt, username, image_urls or []
+                channel_id, prompt, username, image_urls or [], server_context=server_context
             ):
                 if data_type == "text":
                     for chunk in chunk_text(content, 2000):
