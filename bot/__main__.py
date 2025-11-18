@@ -146,7 +146,7 @@ class Bot:
             """Called when a poll is completed."""
             try:
                 # Announce the poll results in the same channel
-                channel = poll.channel
+                channel = poll.message.channel
                 if channel and poll.answers:
                     poll_message = f"The poll '{poll.question}' has completed! Here are the results:\n"
                     for option in poll.answers:
