@@ -142,30 +142,37 @@ class Bot:
             await self._send_agent_response(message.channel, channel_id, message.content, message.author.name, image_urls)
 
         @self.client.event
-        async def on_poll_complete(poll: discord.Poll):
-            """Called when a poll is completed."""
-            try:
-                # Announce the poll results in the same channel
-                channel = poll.message.channel
-                if channel and poll.answers:
-                    poll_message = f"The poll '{poll.question}' has completed! Here are the results:\n"
-                    for option in poll.answers:
-                        poll_message += f"- {option.text}: {option.vote_count} votes\n"
-                    
-                    # Find the winning option(s) - handle ties
-                    max_votes = max(option.vote_count for option in poll.answers)
-                    winners = [option for option in poll.answers if option.vote_count == max_votes]
-                    
-                    if len(winners) == 1:
-                        poll_message += f"\nThe winning option is: {winners[0].text} with {winners[0].vote_count} votes!"
-                    elif len(winners) > 1:
-                        winner_names = ", ".join(w.text for w in winners)
-                        poll_message += f"\nIt's a tie! Winners: {winner_names} (each with {max_votes} votes)"
-                    
-                    channel_id = str(channel.id)
-                    await self._send_agent_response(channel, channel_id, poll_message, "poll_bot")
-            except discord.HTTPException:
-                pass
+        async def on_message_edit(before: discord.Message, after: discord.Message):
+            """Called when a message is edited."""
+            # Check if the message has a poll and it just finished
+            if (
+                after.poll
+                and after.poll.is_finalized()
+                and (before.poll and not before.poll.is_finalized())
+            ):
+                try:
+                    poll = after.poll
+                    # Announce the poll results in the same channel
+                    channel = after.channel
+                    if channel and poll.answers:
+                        poll_message = f"The poll '{poll.question}' has completed! Here are the results:\n"
+                        for option in poll.answers:
+                            poll_message += f"- {option.text}: {option.vote_count} votes\n"
+                        
+                        # Find the winning option(s) - handle ties
+                        max_votes = max(option.vote_count for option in poll.answers)
+                        winners = [option for option in poll.answers if option.vote_count == max_votes]
+                        
+                        if len(winners) == 1:
+                            poll_message += f"\nThe winning option is: {winners[0].text} with {winners[0].vote_count} votes!"
+                        elif len(winners) > 1:
+                            winner_names = ", ".join(w.text for w in winners)
+                            poll_message += f"\nIt's a tie! Winners: {winner_names} (each with {max_votes} votes)"
+                        
+                        channel_id = str(channel.id)
+                        await self._send_agent_response(channel, channel_id, poll_message, "poll_bot")
+                except discord.HTTPException:
+                    pass
 
     # ----------------------------
     # Helper methods
