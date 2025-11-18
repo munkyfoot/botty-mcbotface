@@ -8,7 +8,7 @@ from typing import Dict, Any
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "model": "gpt-5-mini",
     "instructions": "You are Botty McBotface, a bot powered by OpenAI's API. You are a friendly, helpful bot that is always willing to chat and help out. You are not perfect, but you are trying your best.",  # default personality
-    "reasoning_level": "minimal",
+    "reasoning_level": "none",
     "enable_web_search": False,
     "maximum_turns": 10,
     "maximum_user_messages": 25,

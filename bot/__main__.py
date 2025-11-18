@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 import discord
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bot.utils import prepare_image, chunk_text
 
@@ -134,6 +134,21 @@ class Bot:
                         filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
                         file = discord.File(io.BytesIO(data), filename=filename)
                         await message.channel.send(file=file)
+                    elif data_type == "poll":
+                        data = content
+                        try:
+                            poll = discord.Poll(
+                                question=data["question"],
+                                duration=timedelta(hours=data.get("duration", 24)),
+                                multiple=data.get("multiple", False),
+                            )
+
+                            for option in data.get("options", []):
+                                poll.add_answer(text=option)
+
+                            await message.channel.send(poll=poll)
+                        except Exception as e:
+                            await message.channel.send(f"Failed to create poll: {e}")
                     else:
                         raise ValueError(f"Unknown data type: {data_type}")
 

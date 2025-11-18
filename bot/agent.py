@@ -122,6 +122,40 @@ class Agent:
             },
             {
                 "type": "function",
+                "name": "create_poll",
+                "description": "Create a poll in the current channel.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question to ask in the poll. Max 300 characters.",
+                        },
+                        "options": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                            },
+                            "description": "The options for the poll. Max 10 options, each max 55 characters. Prefer 2-5 options for best engagement.",
+                        },
+                        "duration": {
+                            "type": "integer",
+                            "description": "Duration of the poll in hours.",
+                            "default": 24,
+                        },
+                        "multiple": {
+                            "type": "boolean",
+                            "description": "Whether to allow multiple selections.",
+                            "default": False,
+                        },
+                    },
+                    "required": ["question", "options", "duration", "multiple"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
                 "name": "ping",
                 "description": "Simple health-check that replies with Pong! 🏓",
                 "strict": True,
@@ -251,7 +285,7 @@ class Agent:
                     "required": ["prompt", "image"],
                     "additionalProperties": False,
                 },
-            },
+            }
         ]
 
         if enable_web_search:
@@ -264,6 +298,12 @@ class Agent:
         # Local mapping of function names -> callables that implement them
         self._function_map = {
             "quick_message": lambda message: message,
+            "create_poll": lambda question, options, duration=24, multiple=False: {
+                "question": question,
+                "options": options,
+                "duration": duration,
+                "multiple": multiple,
+            },
             "ping": handle_ping,
             "roll_dice": handle_roll,
             "generate_image": handle_generate_image,
@@ -458,6 +498,16 @@ class Agent:
                     if name == "quick_message":
                         yield "text", result
 
+                    if name == "create_poll":
+                        self._append_and_persist(
+                            channel_id,
+                            {
+                                "role": "developer",
+                                "content": f"The poll has already been created and sent to the user. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
+                            },
+                        )
+                        yield "poll", result
+
                     if name == "ping":
                         yield "text", result
 
@@ -469,20 +519,13 @@ class Agent:
 
                         if image_data:
                             if isinstance(image_data, bytes):
-                                self._append_and_persist(
-                                    channel_id,
-                                    {
-                                        "role": "system",
-                                        "content": f"The generated image has already been sent to the user. Do NOT include it as part of your response.",
-                                    },
-                                )
                                 if self._s3:
                                     key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
                                     image_url, _ = prepare_image(
                                         image_data, self._s3, key
                                     )
                                     image_context_message = (
-                                        f"Here is the image url: {image_url}"
+                                        f"Here is the image url: {image_url} -"
                                     )
                                 else:
                                     image_url, _ = prepare_image(image_data, None)
@@ -492,11 +535,11 @@ class Agent:
                                 self._append_and_persist(
                                     channel_id,
                                     {
-                                        "role": "user",
+                                        "role": "developer",
                                         "content": [
                                             {
                                                 "type": "input_text",
-                                                "text": f"<{user_name}> Here is the image you generated. {image_context_message}",
+                                        "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
                                             },
                                             {
                                                 "type": "input_image",
