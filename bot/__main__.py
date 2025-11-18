@@ -147,14 +147,14 @@ class Bot:
             try:
                 # Announce the poll results in the same channel
                 channel = poll.channel
-                if channel and poll.options:
+                if channel and poll.answers:
                     poll_message = f"The poll '{poll.question}' has completed! Here are the results:\n"
-                    for option in poll.options:
+                    for option in poll.answers:
                         poll_message += f"- {option.text}: {option.vote_count} votes\n"
                     
                     # Find the winning option(s) - handle ties
-                    max_votes = max(option.vote_count for option in poll.options)
-                    winners = [option for option in poll.options if option.vote_count == max_votes]
+                    max_votes = max(option.vote_count for option in poll.answers)
+                    winners = [option for option in poll.answers if option.vote_count == max_votes]
                     
                     if len(winners) == 1:
                         poll_message += f"\nThe winning option is: {winners[0].text} with {winners[0].vote_count} votes!"
