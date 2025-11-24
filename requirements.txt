@@ -5,3 +5,4 @@ replicate
 tenacity
 SQLAlchemy
 Pillow
+boto3
