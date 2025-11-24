@@ -91,7 +91,23 @@ class Bot:
             if welcome_channel and welcome_channel.permissions_for(guild.me).send_messages:
                 try:
                     channel_id = str(welcome_channel.id)
-                    intro_message = f"Welcome to the {guild.name} server! Please introduce yourself to the server and tell us what you can do!"
+                    auto_respond_info = (
+                        f"Your designated auto-respond channels are: {', '.join(self._auto_respond_channels)}."
+                        if self._auto_respond_channels
+                        else ""
+                    )
+                    
+                    intro_message = f"""Welcome to the {guild.name} server! Please introduce yourself to the server and tell us what you can do!
+                    
+                    Be sure to gear your introduction towards how you can contribute to this community specifically. Talk about the tools you have access to, and how you can use them to help members of this server.
+                    
+                    Lastly, inform users that they can interact with you by mentioning you in their messages{', sending a message in one of the designated auto-respond channels,' if self._auto_respond_channels else ''} or using slash commands.
+                    
+                    Users can mention you by typing '@' followed by your name, {self.client.user.name}, or by clicking on your name in the member list.
+
+                    Your available commands can be accessed by typing '/' in the message input box.
+
+                    {auto_respond_info}"""
                     await self._send_agent_response(welcome_channel, channel_id, intro_message, "onboarding_bot")
                 except discord.HTTPException:
                     pass
