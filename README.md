@@ -23,7 +23,7 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - A Discord Bot Token
 - OpenAI API Key
 - Replicate API Token (for image features)
