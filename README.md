@@ -65,8 +65,10 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
        "instructions": "You are Botty McBotface, a helpful AI assistant.",
        "reasoning_level": "none",
        "enable_web_search": false,
+       "default_image_model": "seedream",
        "maximum_turns": 10,
        "maximum_user_messages": 25,
+       "maximum_history_chars": 40000,
        "auto_respond_channels": ["general", "bot-chat"],
        "dm_whitelist": [123456789012345678]
    }
@@ -104,16 +106,52 @@ The bot supports multiple image generation models, each with different strengths
 
 You can select a model per-generation using the `model` parameter in `/image`, `/meme`, and `/edit` commands. The default model is configured in `settings.json`.
 
+## Agent Capabilities
+
+When chatting with the bot in conversation (not via slash commands), it has access to several tools it can use autonomously:
+
+### Image & Media
+- **Generate images**: Create images from text prompts with customizable aspect ratios
+- **Generate memes**: Create memes with generated images and overlay text
+- **Edit images**: Edit or combine multiple images based on prompts
+
+### Utilities
+- **Roll dice**: Advanced dice rolling with modifiers, drop lowest/highest
+- **Create polls**: Start polls in the current channel
+- **Web search**: Search the web for information (when enabled in settings)
+- **Ping**: Simple health check
+
+### Memory System
+The bot can maintain its own long-term memory per channel:
+- **Save memories**: Remember interesting facts, user preferences, running jokes
+- **List memories**: Review what it has remembered
+- **Update memories**: Correct or expand existing memories
+- **Delete memories**: Remove outdated or incorrect memories
+
+### Cross-Channel Messaging
+- **Send to channel**: Post messages to other channels in the same server (useful for announcements, etc.)
+
+These tools allow the bot to be proactive - it can decide when to generate images, save memories, or send messages to other channels based on the conversation context.
+
 ## Configuration Options (`settings.json`)
 
+### Core Settings
 - **model**: The OpenAI model to use (default: `gpt-5-mini`).
-- **image_model**: The default image generation model (options: `seedream`, `nano-banana`, `nano-banana-pro`).
 - **instructions**: The system prompt that defines the bot's personality and behavior.
-- **enable_web_search**: Enable or disable web search capabilities (if supported by the model/agent).
-- **maximum_turns**: The maximum number of turns (tool calls / responses) the bot will take in a row.
-- **maximum_user_messages**: The maximum number of user messages to hold in memory.
+- **reasoning_level**: Controls the model's reasoning depth. Options: `none` (default), `low`, `medium`, `high`. Higher levels use more tokens but can improve complex reasoning.
+- **enable_web_search**: Enable or disable web search capabilities (default: `false`). When enabled, the bot can search the web for information.
+
+### Image Settings
+- **default_image_model**: The default image generation model. Options: `seedream`, `nano-banana`, `nano-banana-pro` (default: `seedream`). See [Image Models](#image-models) for details.
+
+### Context & Memory
+- **maximum_turns**: The maximum number of turns (tool calls / responses) the bot will take in a row (default: `10`).
+- **maximum_user_messages**: The maximum number of user messages to hold in memory (default: `25`).
+- **maximum_history_chars**: The maximum number of characters to include in conversation history (default: `40000`). Limits context size to manage token usage.
+
+### Channel & User Access
 - **auto_respond_channels**: A list of channel names where the bot will automatically respond to all messages without being mentioned.
-- **dm_whitelist**: A list of user IDs allowed to interact with the bot via Direct Messages. (e.g., `[123456789012345678, 987654321098765432]`)
+- **dm_whitelist**: A list of user IDs allowed to interact with the bot via Direct Messages (e.g., `[123456789012345678, 987654321098765432]`).
 
 ## Data Persistence
 
