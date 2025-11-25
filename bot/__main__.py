@@ -32,7 +32,7 @@ class Bot:
             raise ValueError("Settings are not loaded or are missing values")
 
         # Initialize image model from settings
-        initialize_image_model(self.settings.get("image_model"))
+        initialize_image_model(self.settings.get("default_image_model"))
 
         # Initialize cloud storage (required)
         self.storage = create_storage()
