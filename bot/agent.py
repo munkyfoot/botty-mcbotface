@@ -28,6 +28,7 @@ from .handlers import (
 )
 from .state import StateStore
 from .utils import prepare_image
+from .image_models import get_model_keys, get_models_description_for_tools, get_active_model_key
 
 if TYPE_CHECKING:
     from .storage import StorageProvider
@@ -214,7 +215,7 @@ class Agent:
             {
                 "type": "function",
                 "name": "generate_image",
-                "description": "Generate an image based on a prompt. Returns a URL of the generated image.",
+                "description": f"Generate an image based on a prompt. Returns a URL of the generated image.\n\nAvailable models:\n{get_models_description_for_tools()}",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -236,12 +237,18 @@ class Agent:
                                 "2:3",
                                 "21:9",
                             ],
-                            "default": "1:1",
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "The image model to use. Each has different strengths.",
+                            "enum": get_model_keys(),
+                            "default": get_active_model_key(),
                         },
                     },
                     "required": [
                         "prompt",
                         "aspect_ratio",
+                        "model",
                     ],
                     "additionalProperties": False,
                 },
@@ -249,7 +256,7 @@ class Agent:
             {
                 "type": "function",
                 "name": "generate_meme",
-                "description": "Generate a meme based on a prompt.",
+                "description": f"Generate a meme based on a prompt.\n\nAvailable models:\n{get_models_description_for_tools()}",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -262,15 +269,21 @@ class Agent:
                             "type": "string",
                             "description": "The text to add to the image.",
                         },
+                        "model": {
+                            "type": "string",
+                            "description": "The image model to use. Each has different strengths.",
+                            "enum": get_model_keys(),
+                            "default": get_active_model_key(),
+                        },
                     },
-                    "required": ["image_prompt", "text"],
+                    "required": ["image_prompt", "text", "model"],
                     "additionalProperties": False,
                 },
             },
             {
                 "type": "function",
                 "name": "edit_image",
-                "description": "Edit or combine images based on a prompt. Can accept one or multiple image URLs to blend, edit, or transform together.",
+                "description": f"Edit or combine images based on a prompt. Can accept one or multiple image URLs to blend, edit, or transform together.\n\nAvailable models:\n{get_models_description_for_tools()}",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -284,8 +297,14 @@ class Agent:
                             "items": {"type": "string"},
                             "description": "Array of image URLs to edit or combine. IMPORTANT: Must be URLs, not base64 strings. Use urls from images in the conversation history.",
                         },
+                        "model": {
+                            "type": "string",
+                            "description": "The image model to use. Models support different max input images (see descriptions).",
+                            "enum": get_model_keys(),
+                            "default": get_active_model_key(),
+                        },
                     },
-                    "required": ["prompt", "images"],
+                    "required": ["prompt", "images", "model"],
                     "additionalProperties": False,
                 },
             },
@@ -392,12 +411,18 @@ class Agent:
             ),
             "ping": lambda: ("text", handle_ping()),
             "roll_dice": lambda **kwargs: ("text", handle_roll(**kwargs)),
-            "generate_image": lambda **kwargs: (
+            "generate_image": lambda prompt, aspect_ratio, model: (
                 "image",
-                handle_generate_image(**kwargs),
+                handle_generate_image(prompt=prompt, aspect_ratio=aspect_ratio, model_key=model),
             ),
-            "generate_meme": lambda **kwargs: ("image", handle_generate_meme(**kwargs)),
-            "edit_image": lambda **kwargs: ("image", handle_edit_image(**kwargs)),
+            "generate_meme": lambda image_prompt, text, model: (
+                "image",
+                handle_generate_meme(image_prompt=image_prompt, text=text, model_key=model),
+            ),
+            "edit_image": lambda prompt, images, model: (
+                "image",
+                handle_edit_image(prompt=prompt, images=images, model_key=model),
+            ),
             "save_memory": lambda content: (
                 "memory:save",
                 self._save_memory(channel_id, content),

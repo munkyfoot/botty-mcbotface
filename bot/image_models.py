@@ -26,6 +26,9 @@ class ImageModelConfig:
     # Human-readable name
     name: str
 
+    # Brief description of the model's strengths and best use cases
+    description: str = ""
+
     # Default parameters for the model
     default_params: dict[str, Any] = field(default_factory=dict)
 
@@ -54,27 +57,30 @@ IMAGE_MODELS: dict[str, ImageModelConfig] = {
     "seedream": ImageModelConfig(
         model_id="bytedance/seedream-4",
         name="Seedream 4",
+        description="Fast, versatile model from ByteDance. Good all-rounder for general image generation and editing. Supports up to 10 reference images.",
         default_params={
             "size": "1K",
             "enhance_prompt": True,
         },
         image_input_key="image_input",
         image_input_as_list=True,
-        max_input_images=10,  # Supports batch and multi-reference
+        max_input_images=10,
     ),
     "nano-banana": ImageModelConfig(
         model_id="google/nano-banana",
         name="Nano Banana",
+        description="Google's efficient model. Great for quick generations with good quality. Supports up to 3 images for multi-image fusion.",
         default_params={
             "output_format": "png",
         },
         image_input_key="image_input",
         image_input_as_list=True,
-        max_input_images=3,  # Supports up to 3 images for multi-image fusion
+        max_input_images=3,
     ),
     "nano-banana-pro": ImageModelConfig(
         model_id="google/nano-banana-pro",
         name="Nano Banana Pro",
+        description="Google's premium model with 2K resolution output. Best for high-quality, detailed images - especially when text is involved. Supports up to 14 reference images for complex compositions.",
         default_params={
             "resolution": "2K",
             "output_format": "png",
@@ -82,7 +88,7 @@ IMAGE_MODELS: dict[str, ImageModelConfig] = {
         },
         image_input_key="image_input",
         image_input_as_list=True,
-        max_input_images=14,  # Supports up to 14 images
+        max_input_images=14,
     ),
 }
 
@@ -179,6 +185,44 @@ def list_models() -> dict[str, str]:
         A dictionary mapping model keys to human-readable names
     """
     return {key: config.name for key, config in IMAGE_MODELS.items()}
+
+
+def get_models_info() -> list[dict[str, str]]:
+    """Get detailed info about all available models for display.
+
+    Returns:
+        A list of dicts with key, name, description, and max_input_images for each model.
+    """
+    return [
+        {
+            "key": key,
+            "name": config.name,
+            "description": config.description,
+            "max_input_images": str(config.max_input_images),
+        }
+        for key, config in IMAGE_MODELS.items()
+    ]
+
+
+def get_model_keys() -> list[str]:
+    """Get all available model keys.
+
+    Returns:
+        A list of valid model keys.
+    """
+    return list(IMAGE_MODELS.keys())
+
+
+def get_models_description_for_tools() -> str:
+    """Get a formatted description of available models for use in tool definitions.
+
+    Returns:
+        A string describing all available models and their strengths.
+    """
+    lines = []
+    for key, config in IMAGE_MODELS.items():
+        lines.append(f"- '{key}': {config.name} - {config.description}")
+    return "\n".join(lines)
 
 
 def build_generation_params(

@@ -85,14 +85,28 @@ python -m bot
 |---------|-------------|
 | `/ping` | Checks if the bot is responsive. |
 | `/roll` | Rolls dice (e.g., `dice_value: 20`, `dice_count: 2`). Supports modifiers and dropping lowest/highest. |
-| `/image` | Generates an image based on a text prompt. Supports various aspect ratios. |
+| `/image` | Generates an image based on a text prompt. Supports aspect ratios and model selection. |
 | `/meme` | Generates a meme using an image prompt and overlay text. |
-| `/edit` | Edits an attached image based on a text prompt. |
+| `/edit` | Edits attached images based on a text prompt. Supports up to 3 images and model selection. |
+| `/models` | Lists available image models with descriptions. |
 | `/clear` | Clears the conversation history for the current channel (Admin/DM only). |
+
+## Image Models
+
+The bot supports multiple image generation models, each with different strengths:
+
+| Model | Description |
+|-------|-------------|
+| `seedream` | Fast, versatile model from ByteDance. Good all-rounder. Supports up to 10 reference images. |
+| `nano-banana` | Google's efficient model. Great for quick generations. Supports up to 3 images. |
+| `nano-banana-pro` | Google's premium model with 2K resolution. Best for detailed images. Supports up to 14 images. |
+
+You can select a model per-generation using the `model` parameter in `/image`, `/meme`, and `/edit` commands. The default model is configured in `settings.json`.
 
 ## Configuration Options (`settings.json`)
 
 - **model**: The OpenAI model to use (default: `gpt-5-mini`).
+- **image_model**: The default image generation model (options: `seedream`, `nano-banana`, `nano-banana-pro`).
 - **instructions**: The system prompt that defines the bot's personality and behavior.
 - **enable_web_search**: Enable or disable web search capabilities (if supported by the model/agent).
 - **maximum_turns**: The maximum number of turns (tool calls / responses) the bot will take in a row.

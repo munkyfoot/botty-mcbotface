@@ -176,15 +176,17 @@ async def handle_generate_image(
 async def handle_generate_meme(
     image_prompt: str,
     text: str,
+    model_key: str | None = None,
 ) -> bytes | None:
     """Generate a meme based on a prompt.
 
     Args:
         image_prompt: The prompt to generate an image from.
         text: The text to add to the image.
+        model_key: Optional model key to use (uses active model if not specified).
     """
     meme_prompt = f"A meme of {image_prompt} with the text: {text}"
-    image_data = await handle_generate_image(meme_prompt)
+    image_data = await handle_generate_image(meme_prompt, model_key=model_key)
     return image_data
 
 
