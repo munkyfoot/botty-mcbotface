@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Tuple, AsyncGenerator
+from typing import Any, Dict, List, Tuple, AsyncGenerator, TYPE_CHECKING
 import os
 import base64
 import io
@@ -27,8 +27,10 @@ from .handlers import (
     handle_edit_image,
 )
 from .state import StateStore
-from .s3 import S3
 from .utils import prepare_image
+
+if TYPE_CHECKING:
+    from .storage import StorageProvider
 
 _DEFAULT_REASONING_LEVEL = "medium"
 _REASONING_LEVEL_CANONICAL: dict[str, str] = {
@@ -72,7 +74,7 @@ class Agent:
         maximum_turns: int,
         maximum_history_chars: int | None = None,
         reasoning_level: str | None = None,
-        s3: S3 | None = None,
+        storage: "StorageProvider | None" = None,
     ) -> None:
 
         self._model = model
@@ -80,7 +82,7 @@ class Agent:
         self._enable_web_search = enable_web_search
         self._maximum_turns = maximum_turns
         self._maximum_history_chars = maximum_history_chars
-        self._s3 = s3
+        self._storage = storage
         self._client = AsyncOpenAI()
         self._reasoning_warning_logged = False
         self._reasoning_level = self._normalize_reasoning_level(reasoning_level)
@@ -726,16 +728,17 @@ class Agent:
                     elif output_type == "image":
                         image_data = result
                         if image_data and isinstance(image_data, bytes):
-                            if self._s3:
-                                key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
-                                image_url, _ = prepare_image(image_data, self._s3, key)
+                            if self._storage:
+                                image_url, _ = prepare_image(image_data, self._storage)
                                 image_context_message = (
                                     f"Here is the image url: {image_url} -"
                                 )
                             else:
-                                image_url, _ = prepare_image(image_data, None)
+                                # No storage configured - this shouldn't happen in normal operation
+                                # but handle gracefully by skipping URL generation
+                                image_url = None
                                 image_context_message = (
-                                    "This is a base64 encoded image."
+                                    "Image generated but no storage configured for URL."
                                 )
 
                             self._append_and_persist(

@@ -26,7 +26,7 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
 - A Discord Bot Token
 - OpenAI API Key
 - Replicate API Token (for image features)
-- AWS S3 Credentials (optional, for image storage)
+- Cloud Storage: Cloudflare R2 (recommended) or AWS S3 (required for image features)
 
 ## Installation
 
@@ -42,18 +42,19 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
    ```
 
 3. **Environment Setup:**
-   Create a `.env` file in the root directory with the following variables:
+   Copy `.env.example` to `.env` and fill in your credentials:
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Required variables:
    ```env
    DISCORD_TOKEN=your_discord_bot_token
    OPENAI_API_KEY=your_openai_api_key
    REPLICATE_API_TOKEN=your_replicate_api_token
-   
-   # Optional: S3 Configuration for image persistence
-   AWS_ACCESS_KEY_ID=your_aws_access_key
-   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-   AWS_BUCKET_NAME=your_bucket_name
-   AWS_REGION_NAME=your_aws_region
    ```
+   
+   Plus one of the cloud storage options below (see [Cloud Storage Setup](#cloud-storage-setup)).
 
 4. **Configuration:**
    Create or modify `settings.json` in the root directory to customize the bot's behavior.
@@ -105,20 +106,61 @@ python -m bot
 The bot maintains conversation history using a local SQLite database (`agent_history.db`) located in the project root. This allows the bot to remember context across restarts. The database stores messages per channel and automatically trims older messages based on the `maximum_user_messages` setting in `settings.json` to keep the context window manageable.
 
 ### Image Storage
-The bot supports two methods for handling generated or edited images:
 
-1. **S3 Storage (Recommended)**:
-   - Requires AWS credentials and an S3 bucket.
-   - Images are uploaded to the configured S3 bucket.
-   - Generates a public URL for the image, which is shared in the chat.
-   - Images are persistent and can be accessed later.
-   - To enable, configure the AWS variables in your `.env` file.
+The bot **requires** cloud storage for generated and edited images. This is necessary because:
+- Generated images need permanent public URLs for the AI to reference them
+- Discord CDN URLs expire and can't be used reliably for image history
 
-2. **Base64 Data URLs (Fallback)**:
-   - Used automatically if S3 is not configured.
-   - Images are compressed and encoded as Base64 data URLs.
-   - The image data is embedded directly in the Discord message.
-   - **Note**: These images are ephemeral and may not be viewable if the message is too large or on certain clients. They are not stored on a server.
+Choose one of the following options:
+
+#### Option 1: Cloudflare R2 (Recommended)
+
+R2 is recommended because:
+- **Generous free tier**: 10GB storage, 10 million reads/month, 1 million writes/month
+- **No egress fees**: Unlimited free bandwidth for serving images
+- **S3-compatible**: Uses the same API as AWS S3
+
+Setup:
+1. Create a [Cloudflare account](https://dash.cloudflare.com) and go to **R2 Object Storage**
+2. Create a new bucket (note the bucket name)
+3. **Enable public access**:
+   - Select your bucket → **Settings**
+   - Under **Public Development URL**, click **Enable**
+   - Type `allow` to confirm and click **Allow**
+   - Copy the **Public Bucket URL** (e.g., `https://pub-xxxx.r2.dev`)
+4. **Create an API token**:
+   - Go back to the R2 overview page
+   - Click **Manage R2 API Tokens** (in the right sidebar)
+   - Click **Create API token**
+   - Choose **Object Read & Write** permission
+   - Optionally scope to your specific bucket
+   - Click **Create API Token**
+   - Copy the **Access Key ID** and **Secret Access Key** (you won't see the secret again!)
+5. Find your **Account ID** in the right sidebar of the R2 overview page
+6. Add to your `.env`:
+   ```env
+   R2_ACCESS_KEY_ID=your_access_key_id
+   R2_SECRET_ACCESS_KEY=your_secret_access_key
+   R2_BUCKET_NAME=your_bucket_name
+   R2_ACCOUNT_ID=your_cloudflare_account_id
+   R2_PUBLIC_URL=https://pub-xxxx.r2.dev
+   ```
+
+#### Option 2: AWS S3
+
+Traditional cloud storage option. May incur costs for storage and data transfer.
+
+Setup:
+1. Create an [AWS account](https://aws.amazon.com)
+2. Create an S3 bucket with public read access enabled
+3. Create an IAM user with S3 read/write permissions
+4. Add to your `.env`:
+   ```env
+   AWS_ACCESS_KEY_ID=your_access_key_id
+   AWS_SECRET_ACCESS_KEY=your_secret_access_key
+   S3_BUCKET_NAME=your_bucket_name
+   AWS_REGION=us-east-1
+   ```
 
 ## License
 

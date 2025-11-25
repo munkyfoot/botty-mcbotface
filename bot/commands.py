@@ -1,9 +1,7 @@
-import base64
 import discord
 import io
-import re
 import uuid
-from typing import Literal, Any
+from typing import Literal, Any, TYPE_CHECKING
 from datetime import datetime, timezone
 
 from .agent import Agent
@@ -14,25 +12,23 @@ from .handlers import (
     handle_generate_meme,
     handle_edit_image,
 )
-from .s3 import S3
 from .utils import prepare_image
+
+if TYPE_CHECKING:
+    from .storage import StorageProvider
 
 
 def setup_commands(
-    tree: discord.app_commands.CommandTree, agent: Agent, s3: S3 | None = None
+    tree: discord.app_commands.CommandTree, agent: Agent, storage: "StorageProvider"
 ) -> None:
     """Set up all slash commands for the bot."""
 
     async def _get_image_user_message(
-        base_message: str, image_data: bytes, filename: str, user_name: str
+        base_message: str, image_data: bytes, user_name: str
     ) -> dict[str, Any]:
 
-        image_url, _ = prepare_image(image_data, s3, filename)
-        image_context_message = (
-            f"Here is the image url: {image_url}"
-            if s3
-            else "This is a base64 encoded image."
-        )
+        image_url, _ = prepare_image(image_data, storage)
+        image_context_message = f"Here is the image url: {image_url}"
 
         return {
             "role": "user",
@@ -141,7 +137,7 @@ def setup_commands(
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated image.", image_data, key, interaction.user.name
+                "Here is the generated image.", image_data, interaction.user.name
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -185,7 +181,7 @@ def setup_commands(
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated meme.", image_data, key, interaction.user.name
+                "Here is the generated meme.", image_data, interaction.user.name
             )
             agent._append_and_persist(
                 str(interaction.channel_id),
@@ -221,14 +217,10 @@ def setup_commands(
 
         # Read the uploaded attachments into memory
         attachment_bytes_list: list[bytes] = []
-        original_keys: list[str] = []
         try:
             for attachment in attachments:
                 data = await attachment.read()
                 attachment_bytes_list.append(data)
-                original_keys.append(
-                    f"images/{interaction.channel_id}/{attachment.id}.jpg"
-                )
         except Exception:  # noqa: BLE001 — fallback for any I/O issues
             await interaction.edit_original_response(
                 content="Failed to read the attached image(s)."
@@ -247,8 +239,8 @@ def setup_commands(
             return
 
         # Sanitize filename and create attachment
-        edited_key = f"images/{interaction.channel_id}/{uuid.uuid4()}.jpg"
-        file = discord.File(io.BytesIO(image_data), filename=edited_key)
+        filename = f"edited_{uuid.uuid4()}.jpg"
+        file = discord.File(io.BytesIO(image_data), filename=filename)
 
         await interaction.edit_original_response(
             attachments=[file],
@@ -264,9 +256,7 @@ def setup_commands(
                 },
             )
             # Log original images
-            for i, (img_bytes, key) in enumerate(
-                zip(attachment_bytes_list, original_keys)
-            ):
+            for i, img_bytes in enumerate(attachment_bytes_list):
                 label = (
                     "Here is the original image."
                     if image_count == 1
@@ -275,7 +265,6 @@ def setup_commands(
                 user_message_original = await _get_image_user_message(
                     label,
                     img_bytes,
-                    key,
                     interaction.user.name,
                 )
                 agent._append_and_persist(
@@ -286,7 +275,6 @@ def setup_commands(
             user_message_edited = await _get_image_user_message(
                 "Here is the edited image.",
                 image_data,
-                edited_key,
                 interaction.user.name,
             )
             agent._append_and_persist(

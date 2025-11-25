@@ -4,12 +4,12 @@ import discord
 import io
 from datetime import datetime, timedelta, timezone
 
-from bot.utils import prepare_image, chunk_text
+from bot.utils import chunk_text
 
 from .commands import setup_commands
 from .agent import Agent
 from .config import load_settings
-from .s3 import S3
+from .storage import create_storage, StorageProvider
 from .image_models import initialize_from_settings as initialize_image_model
 
 load_dotenv()
@@ -34,11 +34,10 @@ class Bot:
         # Initialize image model from settings
         initialize_image_model(self.settings.get("image_model"))
 
-        try:
-            self.s3 = S3()
-        except Exception as e:
-            print(f"Error initializing S3: {e}")
-            self.s3 = None
+        # Initialize cloud storage (required)
+        self.storage = create_storage()
+        storage_type = type(self.storage).__name__
+        print(f"Cloud storage configured successfully ({storage_type}).")
 
         self.agent = Agent(
             model=self.settings["model"],
@@ -47,14 +46,14 @@ class Bot:
             maximum_turns=self.settings["maximum_turns"],
             maximum_history_chars=self.settings.get("maximum_history_chars"),
             reasoning_level=self.settings.get("reasoning_level"),
-            s3=self.s3,
+            storage=self.storage,
         )
 
         self._auto_respond_channels = self.settings["auto_respond_channels"]
         self._dm_whitelist = self.settings["dm_whitelist"]
 
         # Set up slash commands from the commands module
-        setup_commands(self.tree, self.agent, self.s3)
+        setup_commands(self.tree, self.agent, self.storage)
 
         # ----------------------------
         # Event handlers
@@ -162,13 +161,15 @@ class Bot:
                 if getattr(attachment, "content_type", "")
                 and attachment.content_type.startswith("image/")
             ]
+            # Upload user images to cloud storage for permanent URLs
             image_urls = []
-
             for attachment in image_attachments:
-                image_data = await attachment.read()
-                key = f"images/{message.channel.id}/{attachment.id}.jpg"
-                image_url, _ = prepare_image(image_data, self.s3, key)
-                image_urls.append(image_url)
+                try:
+                    image_data = await attachment.read()
+                    image_url = self.storage.public_upload(image_data, attachment.content_type)
+                    image_urls.append(image_url)
+                except Exception as e:
+                    print(f"Failed to upload user image: {e}")
 
             channel_id = str(message.channel.id)
             await self._send_agent_response(message.channel, channel_id, message.content, message.author.name, image_urls)
