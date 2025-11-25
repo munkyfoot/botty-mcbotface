@@ -112,14 +112,29 @@ class Bot:
                 except discord.HTTPException:
                     pass
 
-        @self.client.event
-        async def on_message(
-            message: discord.Message,
-        ):  # noqa: D401 — Discord.py callback signature
-            """Basic prefix command to complement the slash command."""
+        async def _handle_message(message: discord.Message, require_new_mention: bool = False, previous_mentions: set = None):
+            """Process a message and send agent response if appropriate.
+            
+            Args:
+                message: The Discord message to process.
+                require_new_mention: If True, only respond if bot was newly mentioned.
+                previous_mentions: Set of previous mentions (for edited messages).
+            """
             # Ignore messages from the bot itself to avoid infinite loops.
             if message.author == self.client.user:
                 return
+
+            bot_mentioned = (
+                self.client.user in message.mentions if self.client.user else False
+            )
+
+            # If we require a new mention, check that bot wasn't mentioned before
+            if require_new_mention:
+                bot_mentioned_before = (
+                    self.client.user in previous_mentions if self.client.user and previous_mentions else False
+                )
+                if not bot_mentioned or bot_mentioned_before:
+                    return
 
             # Only respond to DMs if the user is in the whitelist,
             # or to channels if the channel name is in auto_respond_channels.
@@ -130,9 +145,6 @@ class Bot:
             else:
                 # Channel: check if channel name is in auto_respond_channels
                 channel_name = getattr(message.channel, "name", None)
-                bot_mentioned = (
-                    self.client.user in message.mentions if self.client.user else False
-                )
                 if (
                     channel_name is None
                     or channel_name not in self._auto_respond_channels
@@ -158,8 +170,18 @@ class Bot:
             await self._send_agent_response(message.channel, channel_id, message.content, message.author.name, image_urls)
 
         @self.client.event
+        async def on_message(
+            message: discord.Message,
+        ):  # noqa: D401 — Discord.py callback signature
+            """Basic prefix command to complement the slash command."""
+            await _handle_message(message)
+
+        @self.client.event
         async def on_message_edit(before: discord.Message, after: discord.Message):
             """Called when a message is edited."""
+            # Handle case where bot was newly mentioned in the edit
+            await _handle_message(after, require_new_mention=True, previous_mentions=set(before.mentions))
+
             # Check if the message has a poll and it just finished
             if (
                 after.poll
