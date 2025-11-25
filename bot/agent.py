@@ -70,7 +70,7 @@ class Agent:
         instructions: str,
         enable_web_search: bool,
         maximum_turns: int,
-        maximum_user_messages: int,
+        maximum_history_chars: int | None = None,
         reasoning_level: str | None = None,
         s3: S3 | None = None,
     ) -> None:
@@ -79,7 +79,7 @@ class Agent:
         self._instructions = instructions
         self._enable_web_search = enable_web_search
         self._maximum_turns = maximum_turns
-        self._maximum_user_messages = maximum_user_messages
+        self._maximum_history_chars = maximum_history_chars
         self._s3 = s3
         self._client = AsyncOpenAI()
         self._reasoning_warning_logged = False
@@ -90,7 +90,7 @@ class Agent:
         # ------------------------------------------------------------------
         # Persistence setup via StateStore
         # ------------------------------------------------------------------
-        self._state = StateStore(maximum_user_messages=self._maximum_user_messages)
+        self._state = StateStore(maximum_history_chars=self._maximum_history_chars)
 
         # In-memory mapping channel_id -> history list
         self._histories: Dict[str, List[Dict[str, Any]]] = {}
@@ -113,12 +113,12 @@ class Agent:
                     "properties": {
                         "message": {
                             "type": "string",
-                            "description": "The message to send to the user."
+                            "description": "The message to send to the user.",
                         }
                     },
                     "required": ["message"],
-                    "additionalProperties": False
-                }
+                    "additionalProperties": False,
+                },
             },
             {
                 "type": "function",
@@ -285,7 +285,74 @@ class Agent:
                     "required": ["prompt", "image"],
                     "additionalProperties": False,
                 },
-            }
+            },
+            {
+                "type": "function",
+                "name": "save_memory",
+                "description": "Save something interesting or meaningful to your long-term memory. Feel free to remember things you find funny, moments that stand out, running jokes, user preferences, interesting facts about the people you chat with, or anything that helps you understand and relate to this channel better. Think of this as your personal diary - save what feels worth remembering to build your own personality and connection with the group.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "What you want to remember. Write it naturally - could be a joke, a fact, an observation, a preference, or anything memorable.",
+                        },
+                    },
+                    "required": ["content"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "list_memories",
+                "description": "List all long-term memories for the current channel. Use this to review what you've remembered.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "update_memory",
+                "description": "Update an existing long-term memory with new content. Use this to correct or expand upon a previously saved memory.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {
+                            "type": "string",
+                            "description": "The ID of the memory to update (can be the short 8-character prefix shown in list_memories).",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The new content for the memory.",
+                        },
+                    },
+                    "required": ["memory_id", "content"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "delete_memory",
+                "description": "Delete a long-term memory that is no longer relevant or accurate.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {
+                            "type": "string",
+                            "description": "The ID of the memory to delete (can be the short 8-character prefix shown in list_memories).",
+                        },
+                    },
+                    "required": ["memory_id"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -295,21 +362,114 @@ class Agent:
                 }
             )
 
-        # Local mapping of function names -> callables that implement them
-        self._function_map = {
-            "quick_message": lambda message: message,
-            "create_poll": lambda question, options, duration=24, multiple=False: {
-                "question": question,
-                "options": options,
-                "duration": duration,
-                "multiple": multiple,
-            },
-            "ping": handle_ping,
-            "roll_dice": handle_roll,
-            "generate_image": handle_generate_image,
-            "generate_meme": handle_generate_meme,
-            "edit_image": handle_edit_image,
+        # Function handlers will be built per-request since some need channel_id context
+        # See _build_function_handlers() method
+
+    # ---------------------------------------------------------------------
+    # Function handler builders
+    # ---------------------------------------------------------------------
+    def _build_function_handlers(self, channel_id: str) -> Dict[str, Any]:
+        """Build function handlers with channel context.
+
+        Returns a dict mapping function names to handler functions.
+        Each handler returns a tuple of (output_type, result) where:
+        - output_type: "text", "poll", "image", or None (no output to user)
+        - result: The data to send (string, dict, bytes, etc.)
+        """
+        return {
+            "quick_message": lambda message: ("text", message),
+            "create_poll": lambda question, options, duration=24, multiple=False: (
+                "poll",
+                {
+                    "question": question,
+                    "options": options,
+                    "duration": duration,
+                    "multiple": multiple,
+                },
+            ),
+            "ping": lambda: ("text", handle_ping()),
+            "roll_dice": lambda **kwargs: ("text", handle_roll(**kwargs)),
+            "generate_image": lambda **kwargs: (
+                "image",
+                handle_generate_image(**kwargs),
+            ),
+            "generate_meme": lambda **kwargs: ("image", handle_generate_meme(**kwargs)),
+            "edit_image": lambda **kwargs: ("image", handle_edit_image(**kwargs)),
+            "save_memory": lambda content: (
+                "memory:save",
+                self._save_memory(channel_id, content),
+            ),
+            "list_memories": lambda: ("memory:list", self._list_memories(channel_id)),
+            "update_memory": lambda memory_id, content: (
+                "memory:update",
+                self._update_memory(channel_id, memory_id, content),
+            ),
+            "delete_memory": lambda memory_id: (
+                "memory:delete",
+                self._delete_memory(channel_id, memory_id),
+            ),
         }
+
+    # ---------------------------------------------------------------------
+    # Memory management helpers
+    # ---------------------------------------------------------------------
+    def _save_memory(self, channel_id: str, content: str) -> str:
+        """Save a new long-term memory."""
+        memory = self._state.add_memory(channel_id, content)
+        return f"Memory saved with ID: {memory['id'][:8]}"
+
+    def _list_memories(self, channel_id: str) -> str:
+        """List all memories for a channel."""
+        memories = self._state.load_memories(channel_id)
+        if not memories:
+            return "No memories saved for this channel."
+
+        lines = ["Long-term memories:"]
+        for memory in memories:
+            lines.append(f"- [{memory['id'][:8]}] {memory['content']}")
+        return "\n".join(lines)
+
+    def _update_memory(self, channel_id: str, memory_id: str, content: str) -> str:
+        """Update an existing memory."""
+        # Try to find memory by prefix match if short ID provided
+        memories = self._state.load_memories(channel_id)
+        full_id = None
+        for memory in memories:
+            if memory["id"].startswith(memory_id):
+                full_id = memory["id"]
+                break
+
+        if not full_id:
+            return f"Memory with ID '{memory_id}' not found."
+
+        result = self._state.update_memory(full_id, content)
+        if result:
+            return f"Memory [{memory_id[:8]}] updated successfully."
+        return f"Failed to update memory with ID '{memory_id}'."
+
+    def _delete_memory(self, channel_id: str, memory_id: str) -> str:
+        """Delete a memory."""
+        # Try to find memory by prefix match if short ID provided
+        memories = self._state.load_memories(channel_id)
+        full_id = None
+        for memory in memories:
+            if memory["id"].startswith(memory_id):
+                full_id = memory["id"]
+                break
+
+        if not full_id:
+            return f"Memory with ID '{memory_id}' not found."
+
+        if self._state.delete_memory(full_id):
+            return f"Memory [{memory_id[:8]}] deleted successfully."
+        return f"Failed to delete memory with ID '{memory_id}'."
+
+    def _get_memories_context(self, channel_id: str) -> str:
+        """Get formatted memories for inclusion in instructions."""
+        memories_text = self._state.get_memories_text(channel_id)
+        if not memories_text:
+            return ""
+        return f"\n\n## Long-Term Memories\nThese are important facts and information you've saved about this channel. Use them to provide personalized and contextually relevant responses:\n{memories_text}"
 
     # ---------------------------------------------------------------------
     # Public helpers
@@ -401,14 +561,19 @@ class Agent:
                     )
                 raw_history = self._state.load_history(channel_id)
                 history = self._prepare_history_for_model(raw_history)
+
+                # Build instructions with long-term memories
+                memories_context = self._get_memories_context(channel_id)
+                full_instructions = self._instructions + memories_context
+                if server_context:
+                    full_instructions = "\n\n".join([full_instructions, server_context])
+
                 response_kwargs: Dict[str, Any] = {
                     "model": self._model,
                     "input": history,  # type: ignore[arg-type]
                     "tools": self._tools if not last_turn else [],  # type: ignore[arg-type]
                     "parallel_tool_calls": False,
-                    "instructions": "\n\n".join([self._instructions, server_context])
-                    if server_context
-                    else self._instructions,
+                    "instructions": full_instructions,
                     "truncation": "auto",
                 }
 
@@ -454,6 +619,8 @@ class Agent:
                 # ------------------------------------------------------------------
                 # Step 3 – execute function calls and feed results back to the model
                 # ------------------------------------------------------------------
+                function_handlers = self._build_function_handlers(channel_id)
+
                 for tool_call in tool_calls:
                     name: str = getattr(tool_call, "name")
                     args_str: str = getattr(tool_call, "arguments", "{}")
@@ -462,26 +629,42 @@ class Agent:
                     except json.JSONDecodeError:
                         args = {}
 
-                    # Route to implementation
-                    func = self._function_map.get(name)
-                    if func is None:
-                        # Unknown function – ignore
+                    # Get handler for this function
+                    handler = function_handlers.get(name)
+                    if handler is None:
+                        # Unknown function – skip
                         continue
 
-                    # If the underlying function is a coroutine we need to await it.
-                    result: str | bytes | None
+                    # Execute the handler
+                    output_type: str | None = None
+                    result: str | bytes | dict | None = None
                     success = False
+
                     try:
-                        if asyncio.iscoroutinefunction(func):
-                            result = await func(**args)
+                        # Check if handler or underlying function is async
+                        if asyncio.iscoroutinefunction(handler):
+                            output_type, result = await handler(**args)
                         else:
-                            result = func(**args)
+                            handler_result = handler(**args)
+                            # Handle case where handler returns a coroutine (e.g., wrapped async functions)
+                            if asyncio.iscoroutine(handler_result):
+                                output_type, result = await handler_result
+                            elif (
+                                isinstance(handler_result, tuple)
+                                and len(handler_result) == 2
+                            ):
+                                output_type, result = handler_result
+                                # If result is a coroutine (from async handler like generate_image), await it
+                                if asyncio.iscoroutine(result):
+                                    result = await result
+                            else:
+                                result = handler_result
                         success = True
                     except Exception as e:
                         logging.error(f"Error calling function {name}: {e}")
                         result = f"Error calling function {name}: {e}"
 
-                    # Append both the function call and its output to history
+                    # Append function call output to history
                     self._append_and_persist(
                         channel_id,
                         {
@@ -498,81 +681,75 @@ class Agent:
                     if not success:
                         continue
 
-                    if name == "quick_message":
+                    # Handle output based on type
+                    if output_type.startswith("memory:"):
+                        _, memory_action = output_type.split(":", 1)
+                        if memory_action == "save":
+                            yield "text", "*A new memory was created.*"
+                        elif memory_action == "update":
+                            yield "text", "*A memory has been updated.*"
+                        elif memory_action == "delete":
+                            yield "text", "*A memory has been deleted.*"
+                        elif memory_action == "list":
+                            "text", result
+
+                    elif output_type == "text":
                         yield "text", result
 
-                    if name == "create_poll":
+                    elif output_type == "poll":
                         self._append_and_persist(
                             channel_id,
                             {
                                 "role": "developer",
-                                "content": f"The poll has already been created and sent to the user. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
+                                "content": "The poll has already been created and sent to the user. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
                             },
                         )
                         yield "poll", result
 
-                    if name == "ping":
-                        yield "text", result
-
-                    if name == "roll_dice":
-                        yield "text", result
-
-                    if name in ["generate_image", "generate_meme", "edit_image"]:
+                    elif output_type == "image":
                         image_data = result
-
-                        if image_data:
-                            if isinstance(image_data, bytes):
-                                if self._s3:
-                                    key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
-                                    image_url, _ = prepare_image(
-                                        image_data, self._s3, key
-                                    )
-                                    image_context_message = (
-                                        f"Here is the image url: {image_url} -"
-                                    )
-                                else:
-                                    image_url, _ = prepare_image(image_data, None)
-                                    image_context_message = (
-                                        "This is a base64 encoded image."
-                                    )
-                                self._append_and_persist(
-                                    channel_id,
-                                    {
-                                        "role": "developer",
-                                        "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent."
-                                        # [
-                                        #     {
-                                        #         "type": "input_text",
-                                        # "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
-                                        #     },
-                                        #     {
-                                        #         "type": "input_image",
-                                        #         "image_url": image_url,
-                                        #     },
-                                        # ],
-                                    },
+                        if image_data and isinstance(image_data, bytes):
+                            if self._s3:
+                                key = f"images/{channel_id}/{uuid.uuid4()}.jpg"
+                                image_url, _ = prepare_image(image_data, self._s3, key)
+                                image_context_message = (
+                                    f"Here is the image url: {image_url} -"
                                 )
-                                self._append_and_persist(
-                                    channel_id,
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "input_text",
-                                                "text": f"[System: This is the image you just generated, provided for your reference. This is not a user message.] {image_context_message}",
-                                            },
-                                            {
-                                                "type": "input_image",
-                                                "image_url": image_url,
-                                            },
-                                        ]
-                                    },
-                                )
-                                yield "image_data", image_data  # Send uncompressed image
                             else:
-                                yield "text", "Failed to generate image."
+                                image_url, _ = prepare_image(image_data, None)
+                                image_context_message = (
+                                    "This is a base64 encoded image."
+                                )
+
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "developer",
+                                    "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
+                                },
+                            )
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_text",
+                                            "text": f"[System: This is the image you just generated, provided for your reference. This is not a user message.] {image_context_message}",
+                                        },
+                                        {
+                                            "type": "input_image",
+                                            "image_url": image_url,
+                                        },
+                                    ],
+                                },
+                            )
+                            yield "image_data", image_data
                         else:
                             yield "text", "Failed to generate image."
+
+                    # output_type == None means no output to user
+                    # The result is still recorded in history for the model to see
         finally:
             # Ensure flags are cleared so the channel never gets stuck
             self._responding[channel_id] = False
@@ -581,10 +758,17 @@ class Agent:
     # ------------------------------------------------------------------
     # Optional: reset conversation history
     # ------------------------------------------------------------------
-    def reset(self, channel_id: str) -> None:
-        """Clear stored conversation history."""
+    def reset(self, channel_id: str, clear_memories: bool = False) -> None:
+        """Clear stored conversation history.
+
+        Args:
+            channel_id: The channel to reset.
+            clear_memories: If True, also clear long-term memories for this channel.
+        """
         self._histories.pop(channel_id, None)
         self._state.reset(channel_id)
+        if clear_memories:
+            self._state.clear_memories(channel_id)
         # Also clear any runtime flags/locks for this channel
         self._responding.pop(channel_id, None)
         self._queued.pop(channel_id, None)

@@ -11,7 +11,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "reasoning_level": "none",
     "enable_web_search": True,
     "maximum_turns": 10,
-    "maximum_user_messages": 25,
+    "maximum_history_chars": 40000,  # ~10k tokens worth of context
     "auto_respond_channels": [],
     "dm_whitelist": [],
 }
