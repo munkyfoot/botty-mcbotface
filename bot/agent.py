@@ -601,12 +601,8 @@ class Agent:
                         tool_calls.append(item)
 
                 if not tool_calls:
-                    # No function calls – just return the model's text
+                    # No function calls – just return the model's text response
                     assistant_text_resp: str = getattr(response, "output_text", "")
-                    self._append_and_persist(
-                        channel_id,
-                        {"role": "assistant", "content": assistant_text_resp},
-                    )
                     yield "text", assistant_text_resp
 
                     # We have produced a textual response, so end this respond() cycle, unless there are more messages queued.
@@ -685,13 +681,33 @@ class Agent:
                     if output_type.startswith("memory:"):
                         _, memory_action = output_type.split(":", 1)
                         if memory_action == "save":
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "developer",
+                                    "content": "The memory has been saved successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the save.",
+                                },
+                            )
                             yield "text", "*A new memory was created.*"
                         elif memory_action == "update":
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "developer",
+                                    "content": "The memory has been updated successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the update.",
+                                },
+                            )
                             yield "text", "*A memory has been updated.*"
                         elif memory_action == "delete":
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "developer",
+                                    "content": "The memory has been deleted successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the deletion.",
+                                },
+                            )
                             yield "text", "*A memory has been deleted.*"
-                        elif memory_action == "list":
-                            "text", result
+                        # list_memories result is returned to the model, not yielded to user
 
                     elif output_type == "text":
                         yield "text", result
