@@ -18,6 +18,7 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
 - **Image Editing**: Edit existing images using the `/edit` command.
 - **Dice Rolling**: Advanced dice roller with modifiers, drop lowest/highest, and multiple dice support via `/roll`.
 - **Poll Monitoring**: Automatically announces results when a poll concludes.
+- **Cross-Channel Messaging**: The bot can send messages to other channels in the same server.
 - **Welcome Messages**: Greets the server when joining, introducing itself and its capabilities.
 - **Configurable**: Highly customizable via `settings.json` and environment variables. Change the bot's name, personality, and other settings to fit your needs.
 

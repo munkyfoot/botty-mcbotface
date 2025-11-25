@@ -375,6 +375,27 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
+            {
+                "type": "function",
+                "name": "send_to_channel",
+                "description": "Send a message to a different channel in the same server. Useful for posting announcements to an announcements channel, etc. Only works in server contexts (not DMs). Check the server context in your instructions for available channels.",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "channel_id": {
+                            "type": "string",
+                            "description": "The ID of the target channel to send the message to. Must be a channel in the current server.",
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "The message content to send to the channel.",
+                        },
+                    },
+                    "required": ["channel_id", "message"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
         if enable_web_search:
@@ -435,6 +456,10 @@ class Agent:
             "delete_memory": lambda memory_id: (
                 "memory:delete",
                 self._delete_memory(channel_id, memory_id),
+            ),
+            "send_to_channel": lambda channel_id, message: (
+                "cross_channel",
+                {"channel_id": channel_id, "message": message},
             ),
         }
 
@@ -792,6 +817,19 @@ class Agent:
                             yield "image_data", image_data
                         else:
                             yield "text", "Failed to generate image."
+
+                    elif output_type == "cross_channel":
+                        # Send message to a different channel
+                        target_channel_id = result.get("channel_id")
+                        message_content = result.get("message")
+                        self._append_and_persist(
+                            channel_id,
+                            {
+                                "role": "developer",
+                                "content": f"The message has been sent to channel {target_channel_id}. You may inform the user that the message was sent successfully.",
+                            },
+                        )
+                        yield "cross_channel", result
 
                     # output_type == None means no output to user
                     # The result is still recorded in history for the model to see
