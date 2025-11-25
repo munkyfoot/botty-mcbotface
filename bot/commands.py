@@ -192,38 +192,58 @@ def setup_commands(
                 user_message,
             )
 
-    @tree.command(name="edit", description="Edit an image based on a prompt")
+    @tree.command(name="edit", description="Edit/combine images based on a prompt")
+    @discord.app_commands.describe(
+        prompt="Describe the edits or how to combine the images",
+        image1="First image (required)",
+        image2="Second image (optional)",
+        image3="Third image (optional)",
+        private="Whether to hide the response",
+    )
     async def _edit(  # noqa: D401, N802 — internal callback name
         interaction: discord.Interaction,
         prompt: str,
-        image: discord.Attachment,
+        image1: discord.Attachment,
+        image2: discord.Attachment | None = None,
+        image3: discord.Attachment | None = None,
         private: bool = False,
     ) -> None:
-        """Edit an image based on a prompt."""
+        """Edit or combine images based on a prompt."""
         # Defer the response to avoid "Unknown interaction" error
         await interaction.response.defer(thinking=True, ephemeral=private)
 
-        # Read the uploaded attachment into memory so we can send raw bytes to the
-        # image-editing handler. Replicate expects a file-like object or bytes,
-        # not a Discord Attachment instance.
+        # Collect all provided attachments
+        attachments = [image1]
+        if image2:
+            attachments.append(image2)
+        if image3:
+            attachments.append(image3)
+
+        # Read the uploaded attachments into memory
+        attachment_bytes_list: list[bytes] = []
+        original_keys: list[str] = []
         try:
-            attachment_bytes = await image.read()
-            original_key = f"images/{interaction.channel_id}/{image.id}.jpg"
+            for attachment in attachments:
+                data = await attachment.read()
+                attachment_bytes_list.append(data)
+                original_keys.append(
+                    f"images/{interaction.channel_id}/{attachment.id}.jpg"
+                )
         except Exception:  # noqa: BLE001 — fallback for any I/O issues
             await interaction.edit_original_response(
-                content="Failed to read the attached image."
+                content="Failed to read the attached image(s)."
             )
             return
 
         # Call the image-editing handler (should return the edited image bytes)
-        image_data = await handle_edit_image(prompt, attachment_bytes)
+        image_data = await handle_edit_image(prompt, attachment_bytes_list)
 
         if not image_data:
-            await interaction.edit_original_response(content="Failed to edit image.")
+            await interaction.edit_original_response(content="Failed to edit image(s).")
             return
 
         if not isinstance(image_data, bytes):
-            await interaction.edit_original_response(content="Failed to edit image.")
+            await interaction.edit_original_response(content="Failed to edit image(s).")
             return
 
         # Sanitize filename and create attachment
@@ -234,23 +254,35 @@ def setup_commands(
             attachments=[file],
         )
         if not private:
+            image_count = len(attachment_bytes_list)
+            image_word = "image" if image_count == 1 else f"{image_count} images"
             agent._append_and_persist(
                 str(interaction.channel_id),
                 {
                     "role": "system",
-                    "content": f"{interaction.user.name} edited an image with the prompt: {prompt}.",
+                    "content": f"{interaction.user.name} edited {image_word} with the prompt: {prompt}.",
                 },
             )
-            user_message_original = await _get_image_user_message(
-                "Here is the original image.",
-                attachment_bytes,
-                original_key,
-                interaction.user.name,
-            )
-            agent._append_and_persist(
-                str(interaction.channel_id),
-                user_message_original,
-            )
+            # Log original images
+            for i, (img_bytes, key) in enumerate(
+                zip(attachment_bytes_list, original_keys)
+            ):
+                label = (
+                    "Here is the original image."
+                    if image_count == 1
+                    else f"Here is original image {i + 1}."
+                )
+                user_message_original = await _get_image_user_message(
+                    label,
+                    img_bytes,
+                    key,
+                    interaction.user.name,
+                )
+                agent._append_and_persist(
+                    str(interaction.channel_id),
+                    user_message_original,
+                )
+            # Log edited result
             user_message_edited = await _get_image_user_message(
                 "Here is the edited image.",
                 image_data,

@@ -190,27 +190,36 @@ async def handle_generate_meme(
 
 async def handle_edit_image(
     prompt: str,
-    image: bytes | str,
+    images: bytes | str | list[bytes | str],
     model_key: str | None = None,
 ) -> bytes | None:
-    """Edit an image based on a prompt.
+    """Edit image(s) based on a prompt.
 
     Args:
-        prompt: The prompt to edit the image with.
-        image: The image to edit (bytes or URL).
+        prompt: The prompt to edit the image(s) with.
+        images: The image(s) to edit - single item or list of (bytes or URL).
         model_key: Optional model key to use (uses active model if not specified).
 
     Returns:
         bytes: The edited image, or None if editing failed.
     """
-    if isinstance(image, (bytes, bytearray)):
-        input_image = io.BytesIO(image)
+    # Normalize to list
+    if isinstance(images, list):
+        image_list = images
     else:
-        input_image = image
+        image_list = [images]
+
+    # Convert bytes to BytesIO
+    processed_images = []
+    for img in image_list:
+        if isinstance(img, (bytes, bytearray)):
+            processed_images.append(io.BytesIO(img))
+        else:
+            processed_images.append(img)
 
     model_id, params = build_editing_params(
         prompt=prompt,
-        image_input=input_image,
+        image_input=processed_images,
         model_key=model_key,
     )
 

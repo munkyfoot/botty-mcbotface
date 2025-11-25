@@ -45,6 +45,9 @@ class ImageModelConfig:
     # Whether input images should be passed as a list
     image_input_as_list: bool = True
 
+    # Maximum number of input images supported
+    max_input_images: int = 1
+
 
 # Available image model configurations
 IMAGE_MODELS: dict[str, ImageModelConfig] = {
@@ -57,6 +60,7 @@ IMAGE_MODELS: dict[str, ImageModelConfig] = {
         },
         image_input_key="image_input",
         image_input_as_list=True,
+        max_input_images=10,  # Supports batch and multi-reference
     ),
     "nano-banana": ImageModelConfig(
         model_id="google/nano-banana",
@@ -66,6 +70,7 @@ IMAGE_MODELS: dict[str, ImageModelConfig] = {
         },
         image_input_key="image_input",
         image_input_as_list=True,
+        max_input_images=3,  # Supports up to 3 images for multi-image fusion
     ),
     "nano-banana-pro": ImageModelConfig(
         model_id="google/nano-banana-pro",
@@ -77,6 +82,7 @@ IMAGE_MODELS: dict[str, ImageModelConfig] = {
         },
         image_input_key="image_input",
         image_input_as_list=True,
+        max_input_images=14,  # Supports up to 14 images
     ),
 }
 
@@ -206,7 +212,7 @@ def build_generation_params(
 
 def build_editing_params(
     prompt: str,
-    image_input: Any,
+    image_input: Any | list[Any],
     aspect_ratio: AspectRatio | Literal["match_input_image"] = "match_input_image",
     model_key: str | None = None,
     **extra_params: Any,
@@ -215,7 +221,7 @@ def build_editing_params(
 
     Args:
         prompt: The editing prompt
-        image_input: The input image (bytes, BytesIO, or URL)
+        image_input: The input image(s) - single item or list of (bytes, BytesIO, or URL)
         aspect_ratio: Desired aspect ratio or "match_input_image"
         model_key: Optional model key (uses active model if not specified)
         **extra_params: Additional model-specific parameters
@@ -225,11 +231,21 @@ def build_editing_params(
     """
     config = IMAGE_MODELS[model_key] if model_key else get_active_model()
 
-    # Wrap image in list if required by the model
-    if config.image_input_as_list and not isinstance(image_input, list):
-        image_value = [image_input]
+    # Normalize to list
+    if isinstance(image_input, list):
+        images = image_input
     else:
-        image_value = image_input
+        images = [image_input]
+
+    # Enforce max input images limit
+    if len(images) > config.max_input_images:
+        images = images[: config.max_input_images]
+
+    # If model expects a list, pass as list; otherwise pass single item
+    if config.image_input_as_list:
+        image_value = images
+    else:
+        image_value = images[0] if images else None
 
     params = {
         "prompt": prompt,

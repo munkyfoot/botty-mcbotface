@@ -268,21 +268,22 @@ class Agent:
             {
                 "type": "function",
                 "name": "edit_image",
-                "description": "Edit an image based on a prompt.",
+                "description": "Edit or combine images based on a prompt. Can accept one or multiple image URLs to blend, edit, or transform together.",
                 "strict": True,
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "The prompt to edit the image with. Describe the changes you want to make to the image.",
+                            "description": "The prompt describing the edits or how to combine the images.",
                         },
-                        "image": {
-                            "type": "string",
-                            "description": "The url of the image to edit. IMPORTANT: The image must be a URL, not a base64 encoded string. You should only use urls for images available in the conversation history.",
+                        "images": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Array of image URLs to edit or combine. IMPORTANT: Must be URLs, not base64 strings. Use urls from images in the conversation history.",
                         },
                     },
-                    "required": ["prompt", "image"],
+                    "required": ["prompt", "images"],
                     "additionalProperties": False,
                 },
             },
