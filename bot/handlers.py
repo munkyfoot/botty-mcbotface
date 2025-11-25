@@ -7,6 +7,12 @@ import io
 import aiohttp
 from typing import Literal
 
+from bot.image_models import (
+    AspectRatio,
+    build_generation_params,
+    build_editing_params,
+)
+
 
 async def handle_ping() -> str:
     """Handle ping functionality and return the response message.
@@ -120,35 +126,29 @@ async def handle_roll(
 
 async def handle_generate_image(
     prompt: str,
-    aspect_ratio: Literal[
-        "1:1",
-        "4:3",
-        "3:4",
-        "16:9",
-        "9:16",
-        "3:2",
-        "2:3",
-        "21:9",
-    ] = "1:1",
+    aspect_ratio: AspectRatio = "1:1",
+    model_key: str | None = None,
 ) -> bytes | None:
     """Generate an image based on a prompt.
 
     Args:
         prompt: The prompt to generate an image from.
+        aspect_ratio: The aspect ratio of the generated image.
+        model_key: Optional model key to use (uses active model if not specified).
 
     Returns:
-        bytes: The generated image.
+        bytes: The generated image, or None if generation failed.
     """
+    model_id, params = build_generation_params(
+        prompt=prompt,
+        aspect_ratio=aspect_ratio,
+        model_key=model_key,
+    )
 
     output = await asyncio.to_thread(
         replicate.run,
-        "bytedance/seedream-4",
-        input={
-            "prompt": prompt,
-            "size": "1K",
-            "aspect_ratio": aspect_ratio,
-            "enhance_prompt": True,
-        },
+        model_id,
+        input=params,
     )
 
     # Some models return a list of URLs, others a single URL string.
@@ -191,32 +191,33 @@ async def handle_generate_meme(
 async def handle_edit_image(
     prompt: str,
     image: bytes | str,
+    model_key: str | None = None,
 ) -> bytes | None:
     """Edit an image based on a prompt.
 
     Args:
         prompt: The prompt to edit the image with.
-        input_image: The image to edit.
+        image: The image to edit (bytes or URL).
+        model_key: Optional model key to use (uses active model if not specified).
 
     Returns:
-        bytes: The edited image.
+        bytes: The edited image, or None if editing failed.
     """
-
     if isinstance(image, (bytes, bytearray)):
         input_image = io.BytesIO(image)
     else:
         input_image = image
 
+    model_id, params = build_editing_params(
+        prompt=prompt,
+        image_input=input_image,
+        model_key=model_key,
+    )
+
     output = await asyncio.to_thread(
         replicate.run,
-        "bytedance/seedream-4",
-        input={
-            "prompt": prompt,
-            "image_input": [input_image],
-            "size": "1K",
-            "aspect_ratio": "match_input_image",
-            "enhance_prompt": True,
-        },
+        model_id,
+        input=params,
     )
 
     # Some models return a list of URLs, others a single URL string.

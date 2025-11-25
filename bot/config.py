@@ -14,6 +14,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "maximum_history_chars": 40000,  # ~10k tokens worth of context
     "auto_respond_channels": [],
     "dm_whitelist": [],
+    "image_model": "seedream",  # options: seedream, nano-banana, nano-banana-pro
 }
 
 

@@ -10,6 +10,7 @@ from .commands import setup_commands
 from .agent import Agent
 from .config import load_settings
 from .s3 import S3
+from .image_models import initialize_from_settings as initialize_image_model
 
 load_dotenv()
 
@@ -29,6 +30,9 @@ class Bot:
 
         if not self.settings or None in self.settings.values():
             raise ValueError("Settings are not loaded or are missing values")
+
+        # Initialize image model from settings
+        initialize_image_model(self.settings.get("image_model"))
 
         try:
             self.s3 = S3()
