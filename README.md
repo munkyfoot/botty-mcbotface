@@ -55,7 +55,7 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
    REPLICATE_API_TOKEN=your_replicate_api_token
    ```
    
-   Plus one of the cloud storage options below (see [Cloud Storage Setup](#cloud-storage-setup)).
+   Plus one of the cloud storage options below (see [Image Storage](#image-storage)).
 
 4. **Configuration:**
    Create or modify `settings.json` in the root directory to customize the bot's behavior.
