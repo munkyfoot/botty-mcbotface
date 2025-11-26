@@ -234,13 +234,19 @@ class Bot:
         """
         server_context = None
         guild = None
+        scope_id = channel_id  # Default to channel_id for DMs
+        channel_name = ""  # Empty for DMs
+        
         if isinstance(channel, discord.TextChannel):
             guild = channel.guild
+            scope_id = str(guild.id)  # Use server ID for scope
+            channel_name = channel.name
             server_context = f"Server name: {guild.name}"
             if guild.description:
                 server_context += f"\nServer description: {guild.description}"
+            server_context += f"\nCurrent channel: #{channel.name}"
             if channel.topic:
-                server_context += f"\nChannel topic: {channel.topic}"
+                server_context += f" - {channel.topic}"
             
             # Build list of available channels with their IDs
             available_channels = []
@@ -275,7 +281,13 @@ class Bot:
 
         async with channel.typing():
             async for output in self.agent.respond(
-                channel_id, prompt, username, image_urls or [], server_context=server_context
+                scope_id=scope_id,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                user_message=prompt,
+                user_name=username,
+                image_urls=image_urls or [],
+                server_context=server_context,
             ):
                 # Output is now a dict with type, content, channel_id
                 data_type = output.get("type")

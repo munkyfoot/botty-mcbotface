@@ -343,11 +343,11 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
-            # Memory tools don't have channel_id - they always operate on current channel
+            # Memory tools don't have channel_id - they always operate on server scope
             {
                 "type": "function",
                 "name": "save_memory",
-                "description": "Save something interesting or meaningful to your long-term memory. Feel free to remember things you find funny, moments that stand out, running jokes, user preferences, interesting facts about the people you chat with, or anything that helps you understand and relate to this channel better. Think of this as your personal diary - save what feels worth remembering to build your own personality and connection with the group.",
+                "description": "Save something interesting or meaningful to your long-term memory for this server. Feel free to remember things you find funny, moments that stand out, running jokes, user preferences, interesting facts about the people you chat with, or anything that helps you understand and relate to this community better. Think of this as your personal diary - save what feels worth remembering to build your own personality and connection with the group.",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -364,7 +364,7 @@ class Agent:
             {
                 "type": "function",
                 "name": "list_memories",
-                "description": "List all long-term memories for the current channel. Use this to review what you've remembered.",
+                "description": "List all long-term memories for this server. Use this to review what you've remembered.",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -425,7 +425,7 @@ class Agent:
     # ---------------------------------------------------------------------
     # Function handler builders
     # ---------------------------------------------------------------------
-    def _build_function_handlers(self, source_channel_id: str) -> Dict[str, Any]:
+    def _build_function_handlers(self, source_channel_id: str, scope_id: str) -> Dict[str, Any]:
         """Build function handlers with channel context.
 
         Returns a dict mapping function names to handler functions.
@@ -436,6 +436,7 @@ class Agent:
 
         Args:
             source_channel_id: The channel where the user message originated.
+            scope_id: The scope for memory operations (server ID or DM channel ID).
         """
         def _result(output_type: str, content: Any, channel_id: str = source_channel_id) -> Dict[str, Any]:
             """Helper to create consistent result dicts."""
@@ -480,48 +481,48 @@ class Agent:
                 handle_edit_image(prompt=prompt, images=images, model_key=model),
                 channel_id,
             ),
-            # Memory tools always use source channel - no cross-channel memory ops
+            # Memory tools use scope_id (server-scoped, not channel-scoped)
             "save_memory": lambda content: _result(
                 "memory:save",
-                self._save_memory(source_channel_id, content),
+                self._save_memory(scope_id, content),
                 source_channel_id,
             ),
-            "list_memories": lambda: _result("memory:list", self._list_memories(source_channel_id), source_channel_id),
+            "list_memories": lambda: _result("memory:list", self._list_memories(scope_id), source_channel_id),
             "update_memory": lambda memory_id, content: _result(
                 "memory:update",
-                self._update_memory(source_channel_id, memory_id, content),
+                self._update_memory(scope_id, memory_id, content),
                 source_channel_id,
             ),
             "delete_memory": lambda memory_id: _result(
                 "memory:delete",
-                self._delete_memory(source_channel_id, memory_id),
+                self._delete_memory(scope_id, memory_id),
                 source_channel_id,
             ),
         }
 
     # ---------------------------------------------------------------------
-    # Memory management helpers
+    # Memory management helpers (server-scoped)
     # ---------------------------------------------------------------------
-    def _save_memory(self, channel_id: str, content: str) -> str:
-        """Save a new long-term memory."""
-        memory = self._state.add_memory(channel_id, content)
+    def _save_memory(self, scope_id: str, content: str) -> str:
+        """Save a new long-term memory for the server/DM."""
+        memory = self._state.add_memory(scope_id, content)
         return f"Memory saved with ID: {memory['id'][:8]}"
 
-    def _list_memories(self, channel_id: str) -> str:
-        """List all memories for a channel."""
-        memories = self._state.load_memories(channel_id)
+    def _list_memories(self, scope_id: str) -> str:
+        """List all memories for a server/DM."""
+        memories = self._state.load_memories(scope_id)
         if not memories:
-            return "No memories saved for this channel."
+            return "No memories saved for this server."
 
         lines = ["Long-term memories:"]
         for memory in memories:
             lines.append(f"- [{memory['id'][:8]}] {memory['content']}")
         return "\n".join(lines)
 
-    def _update_memory(self, channel_id: str, memory_id: str, content: str) -> str:
+    def _update_memory(self, scope_id: str, memory_id: str, content: str) -> str:
         """Update an existing memory."""
         # Try to find memory by prefix match if short ID provided
-        memories = self._state.load_memories(channel_id)
+        memories = self._state.load_memories(scope_id)
         full_id = None
         for memory in memories:
             if memory["id"].startswith(memory_id):
@@ -536,10 +537,10 @@ class Agent:
             return f"Memory [{memory_id[:8]}] updated successfully."
         return f"Failed to update memory with ID '{memory_id}'."
 
-    def _delete_memory(self, channel_id: str, memory_id: str) -> str:
+    def _delete_memory(self, scope_id: str, memory_id: str) -> str:
         """Delete a memory."""
         # Try to find memory by prefix match if short ID provided
-        memories = self._state.load_memories(channel_id)
+        memories = self._state.load_memories(scope_id)
         full_id = None
         for memory in memories:
             if memory["id"].startswith(memory_id):
@@ -553,43 +554,52 @@ class Agent:
             return f"Memory [{memory_id[:8]}] deleted successfully."
         return f"Failed to delete memory with ID '{memory_id}'."
 
-    def _get_memories_context(self, channel_id: str) -> str:
+    def _get_memories_context(self, scope_id: str) -> str:
         """Get formatted memories for inclusion in instructions."""
-        memories_text = self._state.get_memories_text(channel_id)
+        memories_text = self._state.get_memories_text(scope_id)
         if not memories_text:
             return ""
-        return f"\n\n## Long-Term Memories\nThese are important facts and information you've saved about this channel. Use them to provide personalized and contextually relevant responses:\n{memories_text}"
+        return f"\n\n## Long-Term Memories\nThese are important facts and information you've saved about this server. Use them to provide personalized and contextually relevant responses:\n{memories_text}"
 
     # ---------------------------------------------------------------------
     # Public helpers
     # ---------------------------------------------------------------------
     async def respond(
         self,
+        scope_id: str,
         channel_id: str,
+        channel_name: str,
         user_message: str,
         user_name: str,
         image_urls: List[str] = [],
         server_context: str | None = None,
-    ) -> AsyncGenerator[Tuple[str, Any], None]:  # noqa: D401 — short description style
+    ) -> AsyncGenerator[Dict[str, Any], None]:  # noqa: D401 — short description style
         """Generate the assistant's reply for a user message.
 
         Args:
-            channel_id (str): The ID of the conversation channel.
-            user_message (str): The raw content of the user's message.
-            user_name (str): The name of the user.
-            image_urls (List[str]): The URLs of the images attached to the user's message.
-        Returns:
-            str: The assistant's final textual response ready to be sent.
+            scope_id: The scope for history/memory (server ID for guilds, channel ID for DMs).
+            channel_id: The ID of the channel where the message was sent.
+            channel_name: The name of the channel (for context in history).
+            user_message: The raw content of the user's message.
+            user_name: The name of the user.
+            image_urls: The URLs of the images attached to the user's message.
+            server_context: Optional server context string.
+
+        Yields:
+            Dict with type, content, and channel_id for each output.
         """
         # ------------------------------------------------------------------
         # Step 1 – append user message to conversation history
         # ------------------------------------------------------------------
-        # Fetch or load conversation history for this channel.
-        if channel_id not in self._histories:
+        # Fetch or load conversation history for this scope (server or DM).
+        if scope_id not in self._histories:
             # Load from DB – may be empty list
-            hist = self._state.load_history(channel_id)
-            self._histories[channel_id] = hist
+            hist = self._state.load_history(scope_id)
+            self._histories[scope_id] = hist
 
+        # Format message with channel context: [#channel] <username> message
+        channel_prefix = f"[#{channel_name}] " if channel_name else ""
+        
         user_entry: Dict[str, Any] = {"role": "user"}
         if image_urls and len(image_urls) > 0:
             image_context_message = (
@@ -598,7 +608,7 @@ class Agent:
             user_entry["content"] = [
                 {
                     "type": "input_text",
-                    "text": f"<{user_name}> {user_message}\n{image_context_message}",
+                    "text": f"{channel_prefix}<{user_name}> {user_message}\n{image_context_message}",
                 },
                 *[
                     {"type": "input_image", "image_url": image_url}
@@ -606,24 +616,24 @@ class Agent:
                 ],
             ]
         else:
-            user_entry["content"] = f"<{user_name}> {user_message}"
-        self._append_and_persist(channel_id, user_entry)
+            user_entry["content"] = f"{channel_prefix}<{user_name}> {user_message}"
+        self._append_and_persist(scope_id, user_entry)
 
-        if channel_id not in self._responding or channel_id not in self._queued:
-            self._responding[channel_id] = False
-            self._queued[channel_id] = False
+        if scope_id not in self._responding or scope_id not in self._queued:
+            self._responding[scope_id] = False
+            self._queued[scope_id] = False
 
         # ------------------------------------------------------------------
         # Atomic check/set for responding & queued flags (race-free)
         # ------------------------------------------------------------------
-        lock = self._locks.setdefault(channel_id, asyncio.Lock())
+        lock = self._locks.setdefault(scope_id, asyncio.Lock())
         async with lock:
-            if self._responding[channel_id]:
+            if self._responding[scope_id]:
                 # Another coroutine is already generating a reply – only mark
                 # that we have more messages queued and exit.
-                self._queued[channel_id] = True
+                self._queued[scope_id] = True
                 return
-            self._responding[channel_id] = True
+            self._responding[scope_id] = True
 
         # ------------------------------------------------------------------
         # Step 2 – first call: let the model decide whether to call a function
@@ -634,25 +644,25 @@ class Agent:
             turns = 0
             while turns <= self._maximum_turns:
                 # Clear queued flag if it's set to prevent unneeded turns.
-                if self._queued[channel_id]:
-                    self._queued[channel_id] = False
+                if self._queued[scope_id]:
+                    self._queued[scope_id] = False
 
                 turns += 1
 
                 last_turn = turns == self._maximum_turns
                 if last_turn:
                     self._append_and_persist(
-                        channel_id,
+                        scope_id,
                         {
                             "role": "system",
                             "content": "You have reached the turn limit. If you have not completed all necessary actions, you can request the user to continue the conversation. Otherwise, respond normally.",
                         },
                     )
-                raw_history = self._state.load_history(channel_id)
+                raw_history = self._state.load_history(scope_id)
                 history = self._prepare_history_for_model(raw_history)
 
-                # Build instructions with long-term memories
-                memories_context = self._get_memories_context(channel_id)
+                # Build instructions with long-term memories (server-scoped)
+                memories_context = self._get_memories_context(scope_id)
                 full_instructions = self._instructions + memories_context
                 if server_context:
                     full_instructions = "\n\n".join([full_instructions, server_context])
@@ -687,7 +697,7 @@ class Agent:
                     except (TypeError, ValueError):
                         continue
 
-                    self._append_and_persist(channel_id, serialized)
+                    self._append_and_persist(scope_id, serialized)
 
                     if item_type == "function_call":
                         tool_calls.append(item)
@@ -698,8 +708,8 @@ class Agent:
                     yield {"type": "text", "content": assistant_text_resp, "channel_id": channel_id}
 
                     # We have produced a textual response, so end this respond() cycle, unless there are more messages queued.
-                    if self._queued[channel_id]:
-                        self._queued[channel_id] = False
+                    if self._queued[scope_id]:
+                        self._queued[scope_id] = False
                         continue
                     else:
                         break
@@ -707,7 +717,7 @@ class Agent:
                 # ------------------------------------------------------------------
                 # Step 3 – execute function calls and feed results back to the model
                 # ------------------------------------------------------------------
-                function_handlers = self._build_function_handlers(channel_id)
+                function_handlers = self._build_function_handlers(channel_id, scope_id)
 
                 for tool_call in tool_calls:
                     name: str = getattr(tool_call, "name")
@@ -759,7 +769,7 @@ class Agent:
 
                     # Append function call output to history
                     self._append_and_persist(
-                        channel_id,
+                        scope_id,
                         {
                             "type": "function_call_output",
                             "call_id": getattr(tool_call, "call_id"),
@@ -782,7 +792,7 @@ class Agent:
                         _, memory_action = output_type.split(":", 1)
                         if memory_action == "save":
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "developer",
                                     "content": "The memory has been saved successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the save.",
@@ -791,7 +801,7 @@ class Agent:
                             yield {"type": "text", "content": "*A new memory was created.*", "channel_id": channel_id}
                         elif memory_action == "update":
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "developer",
                                     "content": "The memory has been updated successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the update.",
@@ -800,7 +810,7 @@ class Agent:
                             yield {"type": "text", "content": "*A memory has been updated.*", "channel_id": channel_id}
                         elif memory_action == "delete":
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "developer",
                                     "content": "The memory has been deleted successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the deletion.",
@@ -812,7 +822,7 @@ class Agent:
                     elif output_type == "text":
                         if is_cross_channel:
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "developer",
                                     "content": f"The message has been sent to channel {target_channel_id}. You may inform the user that the message was sent successfully.",
@@ -823,7 +833,7 @@ class Agent:
                     elif output_type == "poll":
                         channel_note = f" in channel {target_channel_id}" if is_cross_channel else ""
                         self._append_and_persist(
-                            channel_id,
+                            scope_id,
                             {
                                 "role": "developer",
                                 "content": f"The poll has already been created and sent{channel_note}. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
@@ -849,14 +859,14 @@ class Agent:
 
                             channel_note = f" to channel {target_channel_id}" if is_cross_channel else " to the user"
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "developer",
                                     "content": f"{image_context_message} The generated image has already been sent{channel_note}. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
                                 },
                             )
                             self._append_and_persist(
-                                channel_id,
+                                scope_id,
                                 {
                                     "role": "user",
                                     "content": [
@@ -878,28 +888,28 @@ class Agent:
                     # output_type == None means no output to user
                     # The result is still recorded in history for the model to see
         finally:
-            # Ensure flags are cleared so the channel never gets stuck
-            self._responding[channel_id] = False
-            self._queued[channel_id] = False
+            # Ensure flags are cleared so the scope never gets stuck
+            self._responding[scope_id] = False
+            self._queued[scope_id] = False
 
     # ------------------------------------------------------------------
     # Optional: reset conversation history
     # ------------------------------------------------------------------
-    def reset(self, channel_id: str, clear_memories: bool = False) -> None:
+    def reset(self, scope_id: str, clear_memories: bool = False) -> None:
         """Clear stored conversation history.
 
         Args:
-            channel_id: The channel to reset.
-            clear_memories: If True, also clear long-term memories for this channel.
+            scope_id: The scope to reset (server ID or DM channel ID).
+            clear_memories: If True, also clear long-term memories for this scope.
         """
-        self._histories.pop(channel_id, None)
-        self._state.reset(channel_id)
+        self._histories.pop(scope_id, None)
+        self._state.reset(scope_id)
         if clear_memories:
-            self._state.clear_memories(channel_id)
-        # Also clear any runtime flags/locks for this channel
-        self._responding.pop(channel_id, None)
-        self._queued.pop(channel_id, None)
-        self._locks.pop(channel_id, None)
+            self._state.clear_memories(scope_id)
+        # Also clear any runtime flags/locks for this scope
+        self._responding.pop(scope_id, None)
+        self._queued.pop(scope_id, None)
+        self._locks.pop(scope_id, None)
 
     def set_reasoning_level(self, level: str | None) -> None:
         """Update the reasoning level for future GPT-5 calls."""
@@ -936,11 +946,11 @@ class Agent:
     # ------------------------------------------------------------------
     # Persistence helper
     # ------------------------------------------------------------------
-    def _append_and_persist(self, channel_id: str, message: Dict[str, Any]) -> None:
+    def _append_and_persist(self, scope_id: str, message: Dict[str, Any]) -> None:
         """Append a message to in-memory history and persist via StateStore."""
         try:
-            history = self._state.append(channel_id, message)
-            self._histories[channel_id] = history
+            history = self._state.append(scope_id, message)
+            self._histories[scope_id] = history
         except Exception as exc:  # noqa: BLE001
             logging.error("Failed to persist agent message: %s", exc)
 

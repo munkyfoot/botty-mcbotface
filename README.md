@@ -122,7 +122,7 @@ When chatting with the bot in conversation (not via slash commands), it has acce
 - **Ping**: Simple health check
 
 ### Memory System
-The bot can maintain its own long-term memory per channel:
+The bot can maintain its own long-term memory per server (or per DM for direct messages):
 - **Save memories**: Remember interesting facts, user preferences, running jokes
 - **List memories**: Review what it has remembered
 - **Update memories**: Correct or expand existing memories
@@ -156,7 +156,11 @@ These tools allow the bot to be proactive - it can decide when to generate image
 ## Data Persistence
 
 ### Agent Memory
-The bot maintains conversation history using a local SQLite database (`agent_history.db`) located in the project root. This allows the bot to remember context across restarts. The database stores messages per channel and automatically trims older messages based on the `maximum_user_messages` setting in `settings.json` to keep the context window manageable.
+The bot maintains conversation history using a local SQLite database (`agent_history.db`) located in the project root. History is **server-scoped**, meaning the bot remembers all conversations across all channels within a server, giving it full context of its interactions. Each message in history is prefixed with the channel name (e.g., `[#general]`) so the bot knows where each conversation took place.
+
+For DMs, history is scoped to the individual DM channel.
+
+The database automatically trims older messages based on the `maximum_history_chars` setting in `settings.json` to keep the context window manageable.
 
 ### Image Storage
 

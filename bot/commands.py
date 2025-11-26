@@ -27,8 +27,20 @@ def setup_commands(
 ) -> None:
     """Set up all slash commands for the bot."""
 
+    def _get_scope_id(interaction: discord.Interaction) -> str:
+        """Get the scope ID for history (server ID for guilds, channel ID for DMs)."""
+        if interaction.guild:
+            return str(interaction.guild.id)
+        return str(interaction.channel_id)
+
+    def _get_channel_prefix(interaction: discord.Interaction) -> str:
+        """Get the channel prefix for messages (e.g., '[#general] ')."""
+        if interaction.guild and hasattr(interaction.channel, 'name'):
+            return f"[#{interaction.channel.name}] "
+        return ""
+
     async def _get_image_user_message(
-        base_message: str, image_data: bytes, user_name: str
+        base_message: str, image_data: bytes, user_name: str, channel_prefix: str = ""
     ) -> dict[str, Any]:
 
         image_url, _ = prepare_image(image_data, storage)
@@ -39,7 +51,7 @@ def setup_commands(
             "content": [
                 {
                     "type": "input_text",
-                    "text": f"<{user_name}> {base_message} {image_context_message}",
+                    "text": f"{channel_prefix}<{user_name}> {base_message} {image_context_message}",
                 },
                 {
                     "type": "input_image",
@@ -76,18 +88,20 @@ def setup_commands(
         )
         await interaction.response.send_message(response, ephemeral=private)
         if not private:
+            scope_id = _get_scope_id(interaction)
+            channel_prefix = _get_channel_prefix(interaction)
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 {
                     "role": "system",
-                    "content": f"{interaction.user.name} rolled {dice_value} {dice_count} times with a modifier of {dice_modifier} and dropped {drop_n_lowest} lowest and {drop_n_highest} highest.",
+                    "content": f"{channel_prefix}{interaction.user.name} rolled {dice_value} {dice_count} times with a modifier of {dice_modifier} and dropped {drop_n_lowest} lowest and {drop_n_highest} highest.",
                 },
             )
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 {
                     "role": "user",
-                    "content": f"<{interaction.user.name}> {response}",
+                    "content": f"{channel_prefix}<{interaction.user.name}> {response}",
                 },
             )
 
@@ -140,19 +154,21 @@ def setup_commands(
             attachments=[file],
         )
         if not private:
+            scope_id = _get_scope_id(interaction)
+            channel_prefix = _get_channel_prefix(interaction)
             model_used = model or get_active_model_key()
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 {
                     "role": "system",
-                    "content": f"{interaction.user.name} generated an image with the prompt: {prompt} (model: {model_used}).",
+                    "content": f"{channel_prefix}{interaction.user.name} generated an image with the prompt: {prompt} (model: {model_used}).",
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated image.", image_data, interaction.user.name
+                "Here is the generated image.", image_data, interaction.user.name, channel_prefix
             )
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 user_message,
             )
 
@@ -192,19 +208,21 @@ def setup_commands(
             attachments=[file],
         )
         if not private:
+            scope_id = _get_scope_id(interaction)
+            channel_prefix = _get_channel_prefix(interaction)
             model_used = model or get_active_model_key()
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 {
                     "role": "system",
-                    "content": f"{interaction.user.name} generated a meme with the prompt: {image_prompt} and text: {text} (model: {model_used}).",
+                    "content": f"{channel_prefix}{interaction.user.name} generated a meme with the prompt: {image_prompt} and text: {text} (model: {model_used}).",
                 },
             )
             user_message = await _get_image_user_message(
-                "Here is the generated meme.", image_data, interaction.user.name
+                "Here is the generated meme.", image_data, interaction.user.name, channel_prefix
             )
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 user_message,
             )
 
@@ -268,14 +286,16 @@ def setup_commands(
             attachments=[file],
         )
         if not private:
+            scope_id = _get_scope_id(interaction)
+            channel_prefix = _get_channel_prefix(interaction)
             image_count = len(attachment_bytes_list)
             image_word = "image" if image_count == 1 else f"{image_count} images"
             model_used = model or get_active_model_key()
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 {
                     "role": "system",
-                    "content": f"{interaction.user.name} edited {image_word} with the prompt: {prompt} (model: {model_used}).",
+                    "content": f"{channel_prefix}{interaction.user.name} edited {image_word} with the prompt: {prompt} (model: {model_used}).",
                 },
             )
             # Log original images
@@ -289,9 +309,10 @@ def setup_commands(
                     label,
                     img_bytes,
                     interaction.user.name,
+                    channel_prefix,
                 )
                 agent._append_and_persist(
-                    str(interaction.channel_id),
+                    scope_id,
                     user_message_original,
                 )
             # Log edited result
@@ -299,9 +320,10 @@ def setup_commands(
                 "Here is the edited image.",
                 image_data,
                 interaction.user.name,
+                channel_prefix,
             )
             agent._append_and_persist(
-                str(interaction.channel_id),
+                scope_id,
                 user_message_edited,
             )
 
@@ -343,14 +365,18 @@ def setup_commands(
 
         if not allowed:
             await interaction.edit_original_response(
-                content="You must be a server admin to clear the conversation history in this channel."
+                content="You must be a server admin to clear the conversation history."
             )
             return
 
         try:
-            agent.reset(str(interaction.channel_id))
-            await interaction.edit_original_response(content="Memory wiped.")
+            scope_id = _get_scope_id(interaction)
+            agent.reset(scope_id)
+            if interaction.guild:
+                await interaction.edit_original_response(content="Server conversation history cleared.")
+            else:
+                await interaction.edit_original_response(content="Conversation history cleared.")
         except Exception as e:
             await interaction.edit_original_response(
-                content=f"Failed to wipe memory: {e}"
+                content=f"Failed to clear history: {e}"
             )
