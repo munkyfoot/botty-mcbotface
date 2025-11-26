@@ -128,8 +128,8 @@ The bot can maintain its own long-term memory per channel:
 - **Update memories**: Correct or expand existing memories
 - **Delete memories**: Remove outdated or incorrect memories
 
-### Cross-Channel Messaging
-- **Send to channel**: Post messages to other channels in the same server (useful for announcements, etc.)
+### Cross-Channel Operations
+All output-producing tools (messages, images, polls, dice rolls) can be directed to any channel in the same server. The agent will use the current channel by default, but can send outputs to other channels when appropriate (e.g., posting an announcement to #announcements).
 
 These tools allow the bot to be proactive - it can decide when to generate images, save memories, or send messages to other channels based on the conversation context.
 

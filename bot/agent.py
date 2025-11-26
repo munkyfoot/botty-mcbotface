@@ -105,28 +105,54 @@ class Agent:
         # Per-channel locks used to make flag updates atomic and avoid races
         self._locks: Dict[str, asyncio.Lock] = {}
 
-        # Pre-defined tools (functions) the model can call.
-        self._tools: List[Dict[str, Any]] = [
+        # Tools are built dynamically per-request to include channel_id
+        # See _build_tools() method
+
+    # ---------------------------------------------------------------------
+    # Tool definition builders
+    # ---------------------------------------------------------------------
+    def _build_tools(self, channel_id: str) -> List[Dict[str, Any]]:
+        """Build tool definitions with channel context.
+
+        Output-producing tools include a channel_id parameter that defaults
+        to the current channel, allowing cross-channel operations.
+
+        Args:
+            channel_id: The current channel ID (used as default for channel_id params).
+
+        Returns:
+            List of tool definitions for the OpenAI API.
+        """
+        # Common channel_id property for output-producing tools
+        channel_id_prop = {
+            "type": "string",
+            "description": f"Target channel ID. Use the current channel ({channel_id}) unless sending to a different channel. Check server context for available channels.",
+            "default": channel_id,
+        }
+
+        tools: List[Dict[str, Any]] = [
             {
                 "type": "function",
                 "name": "quick_message",
-                "description": "Send a quick message to the user and prepare to take an action next turn. Use this before and between tool calls to keep the user informed while performing sequential actions.",
+                "description": "Send a quick message and prepare to take an action next turn. Use this before and between tool calls to keep users informed. Can send to the current channel or a different channel in the same server.",
+                "strict": True,
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "message": {
                             "type": "string",
-                            "description": "The message to send to the user.",
-                        }
+                            "description": "The message to send.",
+                        },
+                        "channel_id": channel_id_prop,
                     },
-                    "required": ["message"],
+                    "required": ["message", "channel_id"],
                     "additionalProperties": False,
                 },
             },
             {
                 "type": "function",
                 "name": "create_poll",
-                "description": "Create a poll in the current channel.",
+                "description": "Create a poll. Can be sent to the current channel or a different channel.",
                 "strict": True,
                 "parameters": {
                     "type": "object",
@@ -152,8 +178,9 @@ class Agent:
                             "description": "Whether to allow multiple selections.",
                             "default": False,
                         },
+                        "channel_id": channel_id_prop,
                     },
-                    "required": ["question", "options", "duration", "multiple"],
+                    "required": ["question", "options", "duration", "multiple", "channel_id"],
                     "additionalProperties": False,
                 },
             },
@@ -164,8 +191,10 @@ class Agent:
                 "strict": True,
                 "parameters": {
                     "type": "object",
-                    "properties": {},
-                    "required": [],
+                    "properties": {
+                        "channel_id": channel_id_prop,
+                    },
+                    "required": ["channel_id"],
                     "additionalProperties": False,
                 },
             },
@@ -201,6 +230,7 @@ class Agent:
                             "description": "Number of highest dice to drop",
                             "default": 0,
                         },
+                        "channel_id": channel_id_prop,
                     },
                     "required": [
                         "dice_value",
@@ -208,6 +238,7 @@ class Agent:
                         "dice_modifier",
                         "drop_n_lowest",
                         "drop_n_highest",
+                        "channel_id",
                     ],
                     "additionalProperties": False,
                 },
@@ -244,11 +275,13 @@ class Agent:
                             "enum": get_model_keys(),
                             "default": get_active_model_key(),
                         },
+                        "channel_id": channel_id_prop,
                     },
                     "required": [
                         "prompt",
                         "aspect_ratio",
                         "model",
+                        "channel_id",
                     ],
                     "additionalProperties": False,
                 },
@@ -275,8 +308,9 @@ class Agent:
                             "enum": get_model_keys(),
                             "default": get_active_model_key(),
                         },
+                        "channel_id": channel_id_prop,
                     },
-                    "required": ["image_prompt", "text", "model"],
+                    "required": ["image_prompt", "text", "model", "channel_id"],
                     "additionalProperties": False,
                 },
             },
@@ -303,11 +337,13 @@ class Agent:
                             "enum": get_model_keys(),
                             "default": get_active_model_key(),
                         },
+                        "channel_id": channel_id_prop,
                     },
-                    "required": ["prompt", "images", "model"],
+                    "required": ["prompt", "images", "model", "channel_id"],
                     "additionalProperties": False,
                 },
             },
+            # Memory tools don't have channel_id - they always operate on current channel
             {
                 "type": "function",
                 "name": "save_memory",
@@ -375,53 +411,39 @@ class Agent:
                     "additionalProperties": False,
                 },
             },
-            {
-                "type": "function",
-                "name": "send_to_channel",
-                "description": "Send a message to a different channel in the same server. Useful for posting announcements to an announcements channel, etc. Only works in server contexts (not DMs). Check the server context in your instructions for available channels.",
-                "strict": True,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "channel_id": {
-                            "type": "string",
-                            "description": "The ID of the target channel to send the message to. Must be a channel in the current server.",
-                        },
-                        "message": {
-                            "type": "string",
-                            "description": "The message content to send to the channel.",
-                        },
-                    },
-                    "required": ["channel_id", "message"],
-                    "additionalProperties": False,
-                },
-            },
         ]
 
-        if enable_web_search:
-            self._tools.append(
+        if self._enable_web_search:
+            tools.append(
                 {
                     "type": "web_search_preview",
                 }
             )
 
-        # Function handlers will be built per-request since some need channel_id context
-        # See _build_function_handlers() method
+        return tools
 
     # ---------------------------------------------------------------------
     # Function handler builders
     # ---------------------------------------------------------------------
-    def _build_function_handlers(self, channel_id: str) -> Dict[str, Any]:
+    def _build_function_handlers(self, source_channel_id: str) -> Dict[str, Any]:
         """Build function handlers with channel context.
 
         Returns a dict mapping function names to handler functions.
-        Each handler returns a tuple of (output_type, result) where:
-        - output_type: "text", "poll", "image", or None (no output to user)
-        - result: The data to send (string, dict, bytes, etc.)
+        Each handler returns a dict with:
+        - type: "text", "poll", "image", "memory", or None (no output to user)
+        - content: The data to send (string, dict, bytes, etc.)
+        - channel_id: Target channel for the output
+
+        Args:
+            source_channel_id: The channel where the user message originated.
         """
+        def _result(output_type: str, content: Any, channel_id: str = source_channel_id) -> Dict[str, Any]:
+            """Helper to create consistent result dicts."""
+            return {"type": output_type, "content": content, "channel_id": channel_id}
+
         return {
-            "quick_message": lambda message: ("text", message),
-            "create_poll": lambda question, options, duration=24, multiple=False: (
+            "quick_message": lambda message, channel_id=source_channel_id: _result("text", message, channel_id),
+            "create_poll": lambda question, options, duration=24, multiple=False, channel_id=source_channel_id: _result(
                 "poll",
                 {
                     "question": question,
@@ -429,37 +451,51 @@ class Agent:
                     "duration": duration,
                     "multiple": multiple,
                 },
+                channel_id,
             ),
-            "ping": lambda: ("text", handle_ping()),
-            "roll_dice": lambda **kwargs: ("text", handle_roll(**kwargs)),
-            "generate_image": lambda prompt, aspect_ratio, model: (
+            "ping": lambda channel_id=source_channel_id: _result("text", handle_ping(), channel_id),
+            "roll_dice": lambda dice_value, dice_count=1, dice_modifier=0, drop_n_lowest=0, drop_n_highest=0, channel_id=source_channel_id: _result(
+                "text",
+                handle_roll(
+                    dice_value=dice_value,
+                    dice_count=dice_count,
+                    dice_modifier=dice_modifier,
+                    drop_n_lowest=drop_n_lowest,
+                    drop_n_highest=drop_n_highest,
+                ),
+                channel_id,
+            ),
+            "generate_image": lambda prompt, aspect_ratio, model, channel_id=source_channel_id: _result(
                 "image",
                 handle_generate_image(prompt=prompt, aspect_ratio=aspect_ratio, model_key=model),
+                channel_id,
             ),
-            "generate_meme": lambda image_prompt, text, model: (
+            "generate_meme": lambda image_prompt, text, model, channel_id=source_channel_id: _result(
                 "image",
                 handle_generate_meme(image_prompt=image_prompt, text=text, model_key=model),
+                channel_id,
             ),
-            "edit_image": lambda prompt, images, model: (
+            "edit_image": lambda prompt, images, model, channel_id=source_channel_id: _result(
                 "image",
                 handle_edit_image(prompt=prompt, images=images, model_key=model),
+                channel_id,
             ),
-            "save_memory": lambda content: (
+            # Memory tools always use source channel - no cross-channel memory ops
+            "save_memory": lambda content: _result(
                 "memory:save",
-                self._save_memory(channel_id, content),
+                self._save_memory(source_channel_id, content),
+                source_channel_id,
             ),
-            "list_memories": lambda: ("memory:list", self._list_memories(channel_id)),
-            "update_memory": lambda memory_id, content: (
+            "list_memories": lambda: _result("memory:list", self._list_memories(source_channel_id), source_channel_id),
+            "update_memory": lambda memory_id, content: _result(
                 "memory:update",
-                self._update_memory(channel_id, memory_id, content),
+                self._update_memory(source_channel_id, memory_id, content),
+                source_channel_id,
             ),
-            "delete_memory": lambda memory_id: (
+            "delete_memory": lambda memory_id: _result(
                 "memory:delete",
-                self._delete_memory(channel_id, memory_id),
-            ),
-            "send_to_channel": lambda channel_id, message: (
-                "cross_channel",
-                {"channel_id": channel_id, "message": message},
+                self._delete_memory(source_channel_id, memory_id),
+                source_channel_id,
             ),
         }
 
@@ -621,10 +657,13 @@ class Agent:
                 if server_context:
                     full_instructions = "\n\n".join([full_instructions, server_context])
 
+                # Build tools dynamically with current channel_id for defaults
+                tools = self._build_tools(channel_id) if not last_turn else []
+
                 response_kwargs: Dict[str, Any] = {
                     "model": self._model,
                     "input": history,  # type: ignore[arg-type]
-                    "tools": self._tools if not last_turn else [],  # type: ignore[arg-type]
+                    "tools": tools,  # type: ignore[arg-type]
                     "parallel_tool_calls": False,
                     "instructions": full_instructions,
                     "truncation": "auto",
@@ -656,7 +695,7 @@ class Agent:
                 if not tool_calls:
                     # No function calls – just return the model's text response
                     assistant_text_resp: str = getattr(response, "output_text", "")
-                    yield "text", assistant_text_resp
+                    yield {"type": "text", "content": assistant_text_resp, "channel_id": channel_id}
 
                     # We have produced a textual response, so end this respond() cycle, unless there are more messages queued.
                     if self._queued[channel_id]:
@@ -692,26 +731,31 @@ class Agent:
                     try:
                         # Check if handler or underlying function is async
                         if asyncio.iscoroutinefunction(handler):
-                            output_type, result = await handler(**args)
+                            handler_result = await handler(**args)
                         else:
                             handler_result = handler(**args)
                             # Handle case where handler returns a coroutine (e.g., wrapped async functions)
                             if asyncio.iscoroutine(handler_result):
-                                output_type, result = await handler_result
-                            elif (
-                                isinstance(handler_result, tuple)
-                                and len(handler_result) == 2
-                            ):
-                                output_type, result = handler_result
-                                # If result is a coroutine (from async handler like generate_image), await it
-                                if asyncio.iscoroutine(result):
-                                    result = await result
-                            else:
-                                result = handler_result
+                                handler_result = await handler_result
+
+                        # Handler returns a dict with type, content, channel_id
+                        if isinstance(handler_result, dict):
+                            output_type = handler_result.get("type")
+                            result = handler_result.get("content")
+                            target_channel_id = handler_result.get("channel_id", channel_id)
+                            # If result content is a coroutine, await it
+                            if asyncio.iscoroutine(result):
+                                result = await result
+                        else:
+                            # Fallback for unexpected return format
+                            output_type = None
+                            result = handler_result
+                            target_channel_id = channel_id
                         success = True
                     except Exception as e:
                         logging.error(f"Error calling function {name}: {e}")
                         result = f"Error calling function {name}: {e}"
+                        target_channel_id = channel_id
 
                     # Append function call output to history
                     self._append_and_persist(
@@ -730,8 +774,11 @@ class Agent:
                     if not success:
                         continue
 
+                    # Determine if this is a cross-channel operation
+                    is_cross_channel = target_channel_id != channel_id
+
                     # Handle output based on type
-                    if output_type.startswith("memory:"):
+                    if output_type and output_type.startswith("memory:"):
                         _, memory_action = output_type.split(":", 1)
                         if memory_action == "save":
                             self._append_and_persist(
@@ -741,7 +788,7 @@ class Agent:
                                     "content": "The memory has been saved successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the save.",
                                 },
                             )
-                            yield "text", "*A new memory was created.*"
+                            yield {"type": "text", "content": "*A new memory was created.*", "channel_id": channel_id}
                         elif memory_action == "update":
                             self._append_and_persist(
                                 channel_id,
@@ -750,7 +797,7 @@ class Agent:
                                     "content": "The memory has been updated successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the update.",
                                 },
                             )
-                            yield "text", "*A memory has been updated.*"
+                            yield {"type": "text", "content": "*A memory has been updated.*", "channel_id": channel_id}
                         elif memory_action == "delete":
                             self._append_and_persist(
                                 channel_id,
@@ -759,21 +806,30 @@ class Agent:
                                     "content": "The memory has been deleted successfully. The user has been notified. You may continue the conversation naturally without repeating confirmation of the deletion.",
                                 },
                             )
-                            yield "text", "*A memory has been deleted.*"
+                            yield {"type": "text", "content": "*A memory has been deleted.*", "channel_id": channel_id}
                         # list_memories result is returned to the model, not yielded to user
 
                     elif output_type == "text":
-                        yield "text", result
+                        if is_cross_channel:
+                            self._append_and_persist(
+                                channel_id,
+                                {
+                                    "role": "developer",
+                                    "content": f"The message has been sent to channel {target_channel_id}. You may inform the user that the message was sent successfully.",
+                                },
+                            )
+                        yield {"type": "text", "content": result, "channel_id": target_channel_id}
 
                     elif output_type == "poll":
+                        channel_note = f" in channel {target_channel_id}" if is_cross_channel else ""
                         self._append_and_persist(
                             channel_id,
                             {
                                 "role": "developer",
-                                "content": "The poll has already been created and sent to the user. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
+                                "content": f"The poll has already been created and sent{channel_note}. You do not need to reshare the options. Instead, you can inform the user that the poll is live and encourage them to participate.",
                             },
                         )
-                        yield "poll", result
+                        yield {"type": "poll", "content": result, "channel_id": target_channel_id}
 
                     elif output_type == "image":
                         image_data = result
@@ -791,11 +847,12 @@ class Agent:
                                     "Image generated but no storage configured for URL."
                                 )
 
+                            channel_note = f" to channel {target_channel_id}" if is_cross_channel else " to the user"
                             self._append_and_persist(
                                 channel_id,
                                 {
                                     "role": "developer",
-                                    "content": f"{image_context_message} The generated image has already been sent to the user. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
+                                    "content": f"{image_context_message} The generated image has already been sent{channel_note}. You do not need to reshare the image data. Instead, you can describe the image, react to it, or simply inform the user that the image has been sent.",
                                 },
                             )
                             self._append_and_persist(
@@ -814,22 +871,9 @@ class Agent:
                                     ],
                                 },
                             )
-                            yield "image_data", image_data
+                            yield {"type": "image_data", "content": image_data, "channel_id": target_channel_id}
                         else:
-                            yield "text", "Failed to generate image."
-
-                    elif output_type == "cross_channel":
-                        # Send message to a different channel
-                        target_channel_id = result.get("channel_id")
-                        message_content = result.get("message")
-                        self._append_and_persist(
-                            channel_id,
-                            {
-                                "role": "developer",
-                                "content": f"The message has been sent to channel {target_channel_id}. You may inform the user that the message was sent successfully.",
-                            },
-                        )
-                        yield "cross_channel", result
+                            yield {"type": "text", "content": "Failed to generate image.", "channel_id": channel_id}
 
                     # output_type == None means no output to user
                     # The result is still recorded in history for the model to see

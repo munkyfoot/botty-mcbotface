@@ -233,41 +233,74 @@ class Bot:
             image_urls: Optional list of image URLs to include in the request.
         """
         server_context = None
+        guild = None
         if isinstance(channel, discord.TextChannel):
-            server_context = f"Server name: {channel.guild.name}"
-            if channel.guild.description:
-                server_context += f"\nServer description: {channel.guild.description}"
+            guild = channel.guild
+            server_context = f"Server name: {guild.name}"
+            if guild.description:
+                server_context += f"\nServer description: {guild.description}"
             if channel.topic:
                 server_context += f"\nChannel topic: {channel.topic}"
             
             # Build list of available channels with their IDs
             available_channels = []
-            for ch in channel.guild.text_channels:
-                if ch.permissions_for(channel.guild.me).send_messages:
+            for ch in guild.text_channels:
+                if ch.permissions_for(guild.me).send_messages:
                     topic_info = f" - {ch.topic}" if ch.topic else ""
                     available_channels.append(f"  - #{ch.name} (ID: {ch.id}){topic_info}")
             
             if available_channels:
                 server_context += f"\n\nAvailable channels you can send messages to:\n" + "\n".join(available_channels)
 
+        async def get_target_channel(target_channel_id: str) -> discord.abc.Messageable | None:
+            """Get the target channel, which may be different from the source channel."""
+            if target_channel_id == channel_id:
+                return channel
+            
+            # Cross-channel: look up the channel in the guild
+            if guild:
+                target = guild.get_channel(int(target_channel_id))
+                if target and isinstance(target, discord.TextChannel):
+                    if target.permissions_for(guild.me).send_messages:
+                        return target
+                    else:
+                        await channel.send(f"I don't have permission to send messages to #{target.name}.")
+                        return None
+                else:
+                    await channel.send(f"Could not find channel with ID {target_channel_id}.")
+                    return None
+            else:
+                await channel.send("Cross-channel messaging is only available in servers, not DMs.")
+                return None
+
         async with channel.typing():
-            async for data_type, content in self.agent.respond(
+            async for output in self.agent.respond(
                 channel_id, prompt, username, image_urls or [], server_context=server_context
             ):
+                # Output is now a dict with type, content, channel_id
+                data_type = output.get("type")
+                content = output.get("content")
+                target_channel_id = output.get("channel_id", channel_id)
+                
+                # Get target channel (may be different from source)
+                target_channel = await get_target_channel(target_channel_id)
+                if target_channel is None:
+                    continue  # Error already reported to source channel
+                
                 if data_type == "text":
                     for chunk in chunk_text(content, 2000):
-                        await channel.send(chunk)
+                        await target_channel.send(chunk)
                 elif data_type == "image_data":
                     data = content
                     if not data or not isinstance(data, bytes):
                         await channel.send(
                             "Failed to download generated image."
                         )
-                        return
+                        continue
                     # Sanitize filename and create attachment
                     filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
                     file = discord.File(io.BytesIO(data), filename=filename)
-                    await channel.send(file=file)
+                    await target_channel.send(file=file)
                 elif data_type == "poll":
                     data = content
                     try:
@@ -280,30 +313,9 @@ class Bot:
                         for option in data.get("options", []):
                             poll.add_answer(text=option)
 
-                        await channel.send(poll=poll)
+                        await target_channel.send(poll=poll)
                     except Exception as e:
                         await channel.send(f"Failed to create poll: {e}")
-                elif data_type == "cross_channel":
-                    # Send a message to a different channel in the same server
-                    data = content
-                    target_channel_id = data.get("channel_id")
-                    message_content = data.get("message")
-                    
-                    if isinstance(channel, discord.TextChannel):
-                        target_channel = channel.guild.get_channel(int(target_channel_id))
-                        if target_channel and isinstance(target_channel, discord.TextChannel):
-                            if target_channel.permissions_for(channel.guild.me).send_messages:
-                                try:
-                                    for chunk in chunk_text(message_content, 2000):
-                                        await target_channel.send(chunk)
-                                except discord.HTTPException as e:
-                                    await channel.send(f"Failed to send message to #{target_channel.name}: {e}")
-                            else:
-                                await channel.send(f"I don't have permission to send messages to #{target_channel.name}.")
-                        else:
-                            await channel.send(f"Could not find channel with ID {target_channel_id}.")
-                    else:
-                        await channel.send("Cross-channel messaging is only available in servers, not DMs.")
                 else:
                     raise ValueError(f"Unknown data type: {data_type}")
 
