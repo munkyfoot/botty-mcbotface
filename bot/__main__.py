@@ -39,9 +39,14 @@ class Bot:
         storage_type = type(self.storage).__name__
         print(f"Cloud storage configured successfully ({storage_type}).")
 
+        # Configure agent instructions
+        instructions = self.settings.get("instructions")
+        instructions += "\n\nNote: You do not need to include the [#channel] tag in the beginning of your response. It is automatically prepended by the system."
+
+        # Initialize the agent
         self.agent = Agent(
             model=self.settings["model"],
-            instructions=self.settings["instructions"],
+            instructions=instructions,
             enable_web_search=self.settings["enable_web_search"],
             maximum_turns=self.settings["maximum_turns"],
             maximum_history_chars=self.settings.get("maximum_history_chars"),
