@@ -61,13 +61,12 @@ Want to extend or change behavior? Fork the repo. If you need new commands, addi
    Create or modify `settings.json` in the root directory to customize the bot's behavior.
    ```json
    {
-       "model": "gpt-5-mini",
+       "model": "gpt-5.1",
        "instructions": "You are Botty McBotface, a helpful AI assistant.",
        "reasoning_level": "none",
-       "enable_web_search": false,
+       "enable_web_search": true,
        "default_image_model": "seedream",
        "maximum_turns": 10,
-       "maximum_user_messages": 25,
        "maximum_history_chars": 40000,
        "auto_respond_channels": ["general", "bot-chat"],
        "dm_whitelist": [123456789012345678]
@@ -136,17 +135,16 @@ These tools allow the bot to be proactive - it can decide when to generate image
 ## Configuration Options (`settings.json`)
 
 ### Core Settings
-- **model**: The OpenAI model to use (default: `gpt-5-mini`).
+- **model**: The OpenAI model to use (default: `gpt-5.1`).
 - **instructions**: The system prompt that defines the bot's personality and behavior.
 - **reasoning_level**: Controls the model's reasoning depth. Options: `none` (default), `low`, `medium`, `high`. Higher levels use more tokens but can improve complex reasoning.
-- **enable_web_search**: Enable or disable web search capabilities (default: `false`). When enabled, the bot can search the web for information.
+- **enable_web_search**: Enable or disable web search capabilities (default: `true`). When enabled, the bot can search the web for information.
 
 ### Image Settings
 - **default_image_model**: The default image generation model. Options: `seedream`, `nano-banana`, `nano-banana-pro` (default: `seedream`). See [Image Models](#image-models) for details.
 
 ### Context & Memory
 - **maximum_turns**: The maximum number of turns (tool calls / responses) the bot will take in a row (default: `10`).
-- **maximum_user_messages**: The maximum number of user messages to hold in memory (default: `25`).
 - **maximum_history_chars**: The maximum number of characters to include in conversation history (default: `40000`). Limits context size to manage token usage.
 
 ### Channel & User Access
